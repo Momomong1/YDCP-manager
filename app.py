@@ -307,7 +307,7 @@ if st.sidebar.button("로그아웃"):
     st.session_state.logged_in = False
     st.rerun()
 
-tab_cal, tab_my, tab_lost = st.tabs(["📅 근무표", "✍️ 내 수정", "🧢 분실물"])
+tab_cal, tab_my, tab_lost = st.tabs(["📅 근무표", "✍️ 개인 일정 수정", "🧢 분실물"])
 
 # 1. 달력 탭
 with tab_cal:
@@ -434,5 +434,6 @@ with tab_lost:
                     del lost_items[i]
                     set_data("lost_found", lost_items)
                     st.rerun()
+
 
 
