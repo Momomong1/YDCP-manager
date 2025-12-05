@@ -7,7 +7,6 @@ import os
 import json
 
 # --- 기본 설정 ---
-# 로컬에서 테스트할 때만 사용하는 파일명
 CRED_FILENAME = "service.json"
 FIREBASE_DB_URL = 'https://ydcpmanager-default-rtdb.firebaseio.com/'
 
@@ -25,7 +24,6 @@ if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
 
 def check_password():
-    # Streamlit Cloud의 Secrets에 'PASSWORD'가 있으면 그걸 쓰고, 없으면 1234
     if "PASSWORD" in st.secrets:
         system_pass = st.secrets["PASSWORD"]
     else:
@@ -46,7 +44,6 @@ if not st.session_state.logged_in:
 # ==========================================
 # 📱 메인 앱 시작
 # ==========================================
-
 st.markdown("""
 <style>
     .stApp { font-family: 'Malgun Gothic', sans-serif; }
@@ -66,22 +63,31 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- Firebase 초기화 (수정된 부분) ---
+# --- Firebase 초기화 (업그레이드됨) ---
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 CRED_PATH = os.path.join(CURRENT_DIR, CRED_FILENAME)
 
 @st.cache_resource
 def init_firebase():
-    # 이미 연결됨
     if firebase_admin._apps: return True
     
-    # 1. Streamlit Cloud Secrets 확인 (이 부분이 수정됨)
+    # 1. Streamlit Cloud Secrets 확인
     if "firebase_key" in st.secrets:
         try:
-            # 문자열로 저장된 JSON을 파싱해서 딕셔너리로 변환
-            json_str = st.secrets["firebase_key"]
-            cred_info = json.loads(json_str)
+            # Secrets에서 가져온 값이 dict(TOML)인지 str(JSON)인지 확인
+            secret_val = st.secrets["firebase_key"]
             
+            if isinstance(secret_val, dict):
+                # TOML 형식으로 입력된 경우 (이게 더 안정적임)
+                cred_info = dict(secret_val)
+            else:
+                # JSON 문자열로 입력된 경우
+                cred_info = json.loads(secret_val)
+            
+            # private_key의 줄바꿈 문자(\n) 처리 보정 (매우 중요)
+            if "private_key" in cred_info:
+                cred_info["private_key"] = cred_info["private_key"].replace("\\n", "\n")
+
             cred = credentials.Certificate(cred_info)
             firebase_admin.initialize_app(cred, {'databaseURL': FIREBASE_DB_URL})
             return True
@@ -89,7 +95,7 @@ def init_firebase():
             st.error(f"Cloud Secrets 인증 오류: {e}")
             return False
 
-    # 2. 로컬 파일 확인 (PC 환경)
+    # 2. 로컬 파일 확인
     if os.path.exists(CRED_PATH):
         try:
             cred = credentials.Certificate(CRED_PATH)
@@ -99,7 +105,7 @@ def init_firebase():
             st.error(f"로컬 파일 인증 오류: {e}")
             return False
             
-    # 3. 파일 업로드 (비상용)
+    # 3. 비상용 파일 업로드
     st.warning("⚠️ 인증 파일을 찾을 수 없습니다.")
     uploaded = st.file_uploader("키 파일 업로드", type="json")
     if uploaded:
