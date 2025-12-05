@@ -7,7 +7,7 @@ import os
 import json
 
 # --- 기본 설정 ---
-# 로컬에서 쓸 파일명 (GitHub엔 올리지 마세요)
+# 로컬에서 테스트할 때만 사용하는 파일명
 CRED_FILENAME = "service.json"
 FIREBASE_DB_URL = 'https://ydcpmanager-default-rtdb.firebaseio.com/'
 
@@ -25,9 +25,11 @@ if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
 
 def check_password():
-    # 비밀번호 설정 (원하는대로 변경 가능)
-    # Streamlit Cloud의 Secrets에 'PASSWORD'를 설정하면 그걸 쓰고, 없으면 1234
-    system_pass = st.secrets.get("PASSWORD", "1234")
+    # Streamlit Cloud의 Secrets에 'PASSWORD'가 있으면 그걸 쓰고, 없으면 1234
+    if "PASSWORD" in st.secrets:
+        system_pass = st.secrets["PASSWORD"]
+    else:
+        system_pass = "1234"
     
     if st.session_state.password_input == system_pass:
         st.session_state.logged_in = True
@@ -64,24 +66,27 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- Firebase 초기화 (클라우드/로컬 자동 감지) ---
+# --- Firebase 초기화 (수정된 부분) ---
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 CRED_PATH = os.path.join(CURRENT_DIR, CRED_FILENAME)
 
 @st.cache_resource
 def init_firebase():
+    # 이미 연결됨
     if firebase_admin._apps: return True
     
-    # 1. Streamlit Cloud Secrets 확인 (배포 환경)
-    if "firebase" in st.secrets:
+    # 1. Streamlit Cloud Secrets 확인 (이 부분이 수정됨)
+    if "firebase_key" in st.secrets:
         try:
-            # secrets.toml에 있는 정보를 딕셔너리로 변환
-            cred_info = dict(st.secrets["firebase"])
+            # 문자열로 저장된 JSON을 파싱해서 딕셔너리로 변환
+            json_str = st.secrets["firebase_key"]
+            cred_info = json.loads(json_str)
+            
             cred = credentials.Certificate(cred_info)
             firebase_admin.initialize_app(cred, {'databaseURL': FIREBASE_DB_URL})
             return True
         except Exception as e:
-            st.error(f"Cloud 접속 오류: {e}")
+            st.error(f"Cloud Secrets 인증 오류: {e}")
             return False
 
     # 2. 로컬 파일 확인 (PC 환경)
@@ -91,11 +96,11 @@ def init_firebase():
             firebase_admin.initialize_app(cred, {'databaseURL': FIREBASE_DB_URL})
             return True
         except Exception as e:
-            st.error(f"로컬 접속 오류: {e}")
+            st.error(f"로컬 파일 인증 오류: {e}")
             return False
             
     # 3. 파일 업로드 (비상용)
-    st.warning("⚠️ 인증 파일을 찾을 수 없습니다 (로컬/클라우드).")
+    st.warning("⚠️ 인증 파일을 찾을 수 없습니다.")
     uploaded = st.file_uploader("키 파일 업로드", type="json")
     if uploaded:
         cred = credentials.Certificate(json.load(uploaded))
