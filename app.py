@@ -59,7 +59,7 @@ st.markdown("""
         background-color: #fff; /* 배경 흰색 고정 */
     }
 
-    /* 요일 헤더 (월~일일) */
+    /* 요일 헤더 (월~일) */
     .cal-header-row {
         display: grid;
         grid-template-columns: repeat(7, 1fr);
@@ -434,4 +434,5 @@ with tab_lost:
                     del lost_items[i]
                     set_data("lost_found", lost_items)
                     st.rerun()
+
 
