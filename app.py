@@ -27,7 +27,7 @@ def check_password():
     if "PASSWORD" in st.secrets:
         system_pass = st.secrets["PASSWORD"]
     else:
-        system_pass = "1234"
+        system_pass = "0607"
     
     if st.session_state.password_input == system_pass:
         st.session_state.logged_in = True
@@ -323,3 +323,4 @@ with tab_lost:
                     del lost_items[i]
                     set_data("lost_found", lost_items)
                     st.rerun()
+
