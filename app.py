@@ -27,7 +27,7 @@ def check_password():
     if "PASSWORD" in st.secrets:
         system_pass = st.secrets["PASSWORD"]
     else:
-        system_pass = "0607"
+        system_pass = "0616"
     
     if st.session_state.password_input == system_pass:
         st.session_state.logged_in = True
@@ -42,28 +42,114 @@ if not st.session_state.logged_in:
     st.stop()
 
 # ==========================================
-# 📱 메인 앱 시작
+# 🎨 UI 스타일 (모바일 최적화)
 # ==========================================
 st.markdown("""
 <style>
-    .stApp { font-family: 'Malgun Gothic', sans-serif; }
-    .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 1px; background-color: #ddd; border: 1px solid #ddd; }
-    .cal-header { background-color: #f8f9fa; text-align: center; font-weight: bold; font-size: 0.8rem; padding: 5px 0; }
-    .cal-header.sun { color: #e03131; } .cal-header.sat { color: #1c7ed6; }
-    .cal-cell { background-color: white; min-height: 100px; padding: 2px; display: flex; flex-direction: column; }
-    .cal-cell.empty { background-color: #f1f3f5; }
-    .date-label { font-weight: bold; font-size: 0.8rem; margin-bottom: 2px; }
-    .date-label.sun { color: #e03131; } .date-label.sat { color: #1c7ed6; }
-    .work-box { font-size: 0.65rem; padding: 2px; margin-bottom: 2px; border-radius: 3px; line-height: 1.2; word-break: keep-all; }
-    .wb-a { background-color: #E3F2FD; color: #0D47A1; border: 1px solid #BBDEFB; } 
-    .wb-b { background-color: #FFF3E0; color: #E65100; border: 1px solid #FFE0B2; } 
-    .wb-rest { background-color: #FFEBEE; color: #C62828; text-align: center; } 
-    .badge { font-size: 0.65rem; padding: 2px 3px; border-radius: 2px; margin-top: 1px; color: white; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
-    .bg-night { background-color: #1E3A8A; } .bg-leave { background-color: #10B981; } .bg-ot { background-color: #EF4444; } .bg-gray { background-color: #6B7280; }
+    /* 전체 배경 및 폰트 강제 설정 (다크모드 방지) */
+    .stApp {
+        font-family: 'Pretendard', 'Malgun Gothic', sans-serif;
+    }
+
+    /* 달력 전체 컨테이너 */
+    .cal-container {
+        display: flex;
+        flex-direction: column;
+        border: 1px solid #ddd;
+        background-color: #fff; /* 배경 흰색 고정 */
+    }
+
+    /* 요일 헤더 (일~토) */
+    .cal-header-row {
+        display: grid;
+        grid-template-columns: repeat(7, 1fr);
+        background-color: #f1f3f5;
+        border-bottom: 1px solid #ddd;
+    }
+    .cal-header-item {
+        text-align: center;
+        font-weight: bold;
+        padding: 5px 0;
+        font-size: 0.9rem;
+        color: #333; /* 글씨 검은색 고정 */
+    }
+    .cal-header-item.sun { color: #e03131; }
+    .cal-header-item.sat { color: #1c7ed6; }
+
+    /* 날짜 그리드 */
+    .cal-grid {
+        display: grid;
+        grid-template-columns: repeat(7, 1fr);
+        background-color: #e9ecef; /* 그리드 선 색상 */
+        gap: 1px;
+    }
+
+    /* 개별 날짜 칸 */
+    .cal-cell {
+        background-color: #ffffff; /* 셀 배경 흰색 */
+        min-height: 90px;
+        padding: 2px;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+    }
+    .cal-cell.empty { background-color: #f8f9fa; }
+
+    /* 날짜 숫자 */
+    .date-num {
+        font-size: 0.8rem;
+        font-weight: bold;
+        margin-bottom: 2px;
+        padding-left: 2px;
+        color: #333;
+    }
+    .date-num.sun { color: #e03131; }
+    .date-num.sat { color: #1c7ed6; }
+
+    /* 근무 정보 박스 */
+    .work-box {
+        font-size: 0.7rem;
+        padding: 2px 4px;
+        margin-bottom: 2px;
+        border-radius: 4px;
+        line-height: 1.2;
+        color: #333;
+        font-weight: 500;
+        word-break: keep-all;
+    }
+    .wb-a { background-color: #e7f5ff; border: 1px solid #d0ebff; color: #1864ab; } /* 파랑 */
+    .wb-b { background-color: #fff4e6; border: 1px solid #ffe8cc; color: #d9480f; } /* 주황 */
+    .wb-rest { background-color: #ffe3e3; color: #c92a2a; text-align: center; } /* 빨강 */
+
+    /* 개인 일정 배지 */
+    .badge {
+        font-size: 0.7rem;
+        padding: 2px 4px;
+        border-radius: 3px;
+        margin-top: 1px;
+        color: white;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        display: block;
+    }
+    .bg-night { background-color: #1E3A8A; } /* 남색 */
+    .bg-leave { background-color: #10B981; } /* 초록 */
+    .bg-ot { background-color: #EF4444; }    /* 빨강 */
+    .bg-gray { background-color: #868e96; }
+
+    /* ★ 모바일 전용 스타일 (화면 너비 600px 이하) ★ */
+    @media (max-width: 600px) {
+        .cal-header-item { font-size: 0.75rem; padding: 3px 0; }
+        .cal-cell { min-height: 70px; padding: 1px; }
+        .date-num { font-size: 0.7rem; }
+        .work-box { font-size: 0.6rem; padding: 1px 2px; border-radius: 2px; }
+        .badge { font-size: 0.6rem; padding: 1px 2px; border-radius: 2px; }
+    }
 </style>
 """, unsafe_allow_html=True)
 
-# --- Firebase 초기화 (Secrets 오류 해결) ---
+# --- Firebase 초기화 ---
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 CRED_PATH = os.path.join(CURRENT_DIR, CRED_FILENAME)
 
@@ -71,17 +157,13 @@ CRED_PATH = os.path.join(CURRENT_DIR, CRED_FILENAME)
 def init_firebase():
     if firebase_admin._apps: return True
     
-    # 1. Streamlit Cloud Secrets 확인
+    # 1. Streamlit Cloud Secrets (TOML/JSON 호환)
     if "firebase_key" in st.secrets:
         try:
             val = st.secrets["firebase_key"]
-            # 문자열(JSON)인지 딕셔너리(TOML)인지 확인하여 처리
-            if isinstance(val, str):
-                cred_info = json.loads(val)
-            else:
-                cred_info = dict(val)
+            if isinstance(val, str): cred_info = json.loads(val)
+            else: cred_info = dict(val)
             
-            # private_key 줄바꿈 보정
             if "private_key" in cred_info:
                 cred_info["private_key"] = cred_info["private_key"].replace("\\n", "\n")
 
@@ -92,7 +174,7 @@ def init_firebase():
             st.error(f"Cloud 인증 오류: {e}")
             return False
 
-    # 2. 로컬 파일 확인
+    # 2. 로컬 파일
     if os.path.exists(CRED_PATH):
         try:
             cred = credentials.Certificate(CRED_PATH)
@@ -101,8 +183,8 @@ def init_firebase():
         except Exception as e:
             st.error(f"로컬 인증 오류: {e}")
             return False
-
-    # 3. 비상용 파일 업로드
+            
+    # 3. 업로드
     st.warning("⚠️ 인증 파일을 찾을 수 없습니다.")
     uploaded = st.file_uploader("키 파일 업로드", type="json")
     if uploaded:
@@ -118,55 +200,54 @@ if not init_firebase(): st.stop()
 def get_data(path): return db.reference(f'yuldong_data/{path}').get()
 def set_data(path, data): db.reference(f'yuldong_data/{path}').set(data)
 
-# --- [중요] 데이터 구조 보정 함수 (List 오류 해결) ---
+# --- 데이터 정규화 (리스트/딕셔너리 변환) ---
 def normalize_data(data):
-    """Firebase가 리스트로 반환한 데이터를 딕셔너리로 강제 변환"""
     if isinstance(data, list):
-        # 리스트 인덱스를 키 문자열("0", "1", ...)로 변환하여 딕셔너리로 만듦
-        # None 값은 제외
         return {str(i): v for i, v in enumerate(data) if v is not None}
     return data if data else {}
 
-# --- 달력 그리기 ---
+# --- 달력 그리기 (HTML 생성) ---
 def draw_calendar(year, month, sch_data, my_filter=None):
-    # 데이터 정규화 적용 (오류 방지)
     records = normalize_data(sch_data.get("records", {}))
     teams = normalize_data(sch_data.get("teams", {}))
     month_rules = normalize_data(sch_data.get("month_rules", {}))
     
-    # 1조, 2조 명단 추출
+    # 팀원 명단
     t1_list = teams.get("1", [])
     t2_list = teams.get("2", [])
-    if isinstance(t1_list, str): t1_list = [t1_list] # 혹시 문자열이면 리스트로
+    if isinstance(t1_list, str): t1_list = [t1_list]
     if isinstance(t2_list, str): t2_list = [t2_list]
 
+    # 근무 규칙
     month_key = f"{year}-{month:02d}"
     rules = month_rules.get(month_key, {})
     start_team = rules.get("start_team", "1")
     off1 = rules.get("t1_off", [4, 5]) 
     off2 = rules.get("t2_off", [6, 0]) 
     
-    html = '<div class="cal-grid">'
+    # 1. 요일 헤더
+    html = '<div class="cal-container"><div class="cal-header-row">'
     days = ['일', '월', '화', '수', '목', '금', '토']
     for i, d in enumerate(days):
         c = "sun" if i==0 else "sat" if i==6 else ""
-        html += f'<div class="cal-header {c}">{d}</div>'
+        html += f'<div class="cal-header-item {c}">{d}</div>'
+    html += '</div><div class="cal-grid">' # 그리드 시작
     
     cal = calendar.monthcalendar(year, month)
+    
     for r_idx, week in enumerate(cal):
         for c_idx, day in enumerate(week):
             if day == 0:
                 html += '<div class="cal-cell empty"></div>'
                 continue
             
+            # --- 로직: 전날 당직자 제외 ---
             curr_date = datetime(year, month, day)
             prev_str = (curr_date - timedelta(days=1)).strftime("%Y-%m-%d")
             
-            # 전날 당직자 확인
             rest_members = []
             if prev_str in records:
                 prev_recs = records[prev_str]
-                # 리스트인 경우 정규화
                 if isinstance(prev_recs, dict): prev_recs = list(prev_recs.values())
                 elif isinstance(prev_recs, list): prev_recs = [x for x in prev_recs if x]
                 
@@ -174,11 +255,11 @@ def draw_calendar(year, month, sch_data, my_filter=None):
                     if isinstance(r, dict) and r.get('type') == '당직': 
                         rest_members.append(r.get('name'))
             
-            # 명단에서 제외
             t1_today = [m for m in t1_list if m not in rest_members]
             t2_today = [m for m in t2_list if m not in rest_members]
             t1_str, t2_str = ", ".join(t1_today), ", ".join(t2_today)
             
+            # --- 로직: 조별 근무 표시 ---
             work_html = ""
             is_t1_off, is_t2_off = (c_idx in off1), (c_idx in off2)
             
@@ -186,15 +267,16 @@ def draw_calendar(year, month, sch_data, my_filter=None):
                 is_even_week = (r_idx % 2 == 0)
                 if start_team == "1": duty_a, duty_b = (t1_str, t2_str) if is_even_week else (t2_str, t1_str)
                 else: duty_a, duty_b = (t2_str, t1_str) if is_even_week else (t1_str, t2_str)
-                if duty_a: work_html += f'<div class="work-box wb-a"><b>[08-17]</b> {duty_a}</div>'
-                if duty_b: work_html += f'<div class="work-box wb-b"><b>[11-20]</b> {duty_b}</div>'
+                if duty_a: work_html += f'<div class="work-box wb-a"><b>08-17</b><br>{duty_a}</div>'
+                if duty_b: work_html += f'<div class="work-box wb-b"><b>11-20</b><br>{duty_b}</div>'
             elif is_t1_off and not is_t2_off:
-                if t2_str: work_html += f'<div class="work-box wb-b"><b>[09-18]</b> {t2_str}</div>'
+                if t2_str: work_html += f'<div class="work-box wb-b"><b>09-18</b><br>{t2_str}</div>'
             elif is_t2_off and not is_t1_off:
-                if t1_str: work_html += f'<div class="work-box wb-a"><b>[09-18]</b> {t1_str}</div>'
+                if t1_str: work_html += f'<div class="work-box wb-a"><b>09-18</b><br>{t1_str}</div>'
             else:
                 work_html += '<div class="work-box wb-rest">전체 휴무</div>'
 
+            # --- 로직: 개인 일정 표시 ---
             d_str = f"{year}-{month:02d}-{day:02d}"
             indiv_html = ""
             if d_str in records:
@@ -214,23 +296,26 @@ def draw_calendar(year, month, sch_data, my_filter=None):
                     indiv_html += f'<div class="badge {cls}">{txt}</div>'
 
             num_cls = "sun" if c_idx==0 else "sat" if c_idx==6 else ""
-            html += f'<div class="cal-cell"><div class="date-label {num_cls}">{day}</div>{work_html}{indiv_html}</div>'
-    html += '</div>'
+            html += f'<div class="cal-cell"><div class="date-num {num_cls}">{day}</div>{work_html}{indiv_html}</div>'
+            
+    html += '</div></div>' # grid 닫고 container 닫기
     st.markdown(html, unsafe_allow_html=True)
 
-# --- 메인 화면 ---
+# --- 메인 화면 탭 구성 ---
 st.title("🏕️ 율동공원 모바일")
 if st.sidebar.button("로그아웃"):
     st.session_state.logged_in = False
     st.rerun()
 
-tab_cal, tab_my, tab_lost = st.tabs(["📅 근무표", "✍️ 개인 근무 수정", "🧢 분실물"])
+tab_cal, tab_my, tab_lost = st.tabs(["📅 근무표", "✍️ 개인일정수정", "🧢 분실물"])
 
+# 1. 달력 탭
 with tab_cal:
     if 'curr_date' not in st.session_state: st.session_state.curr_date = datetime.now()
     def change_month(amount):
         st.session_state.curr_date += timedelta(days=32 * amount)
         st.session_state.curr_date = st.session_state.curr_date.replace(day=1)
+    
     c1, c2, c3 = st.columns([1, 2, 1])
     with c1: st.button("◀", on_click=change_month, args=(-1,), use_container_width=True)
     with c2: 
@@ -238,10 +323,8 @@ with tab_cal:
         st.markdown(f"<h4 style='text-align:center; margin:0'>{cur.year}년 {cur.month}월</h4>", unsafe_allow_html=True)
     with c3: st.button("▶", on_click=change_month, args=(1,), use_container_width=True)
     
-    # 데이터 로드 및 정규화
     sch_data = get_data("schedule") or {}
     teams = normalize_data(sch_data.get("teams", {}))
-    
     t1 = teams.get("1", [])
     t2 = teams.get("2", [])
     if isinstance(t1, str): t1 = [t1]
@@ -249,9 +332,11 @@ with tab_cal:
     
     members = ["전체 보기"] + t1 + t2
     my_filter = st.selectbox("표시 대상", members)
+    
     draw_calendar(cur.year, cur.month, sch_data, my_filter)
     st.caption("※ 전날 당직자는 근무 명단에서 자동 제외됩니다.")
 
+# 2. 내 수정 탭
 with tab_my:
     st.subheader("내 근무 기록 관리")
     sel_name = st.selectbox("이름 선택", [m for m in members if m != "전체 보기"])
@@ -264,8 +349,6 @@ with tab_my:
             if st.form_submit_button("저장", type="primary", use_container_width=True):
                 d_key = in_date.strftime("%Y-%m-%d")
                 fresh_sch = get_data("schedule") or {}
-                
-                # 안전한 초기화 및 정규화
                 if "records" not in fresh_sch: fresh_sch["records"] = {}
                 records = normalize_data(fresh_sch["records"])
                 
@@ -276,7 +359,6 @@ with tab_my:
                 save_val = in_val
                 if in_type == "당직" and not in_val: save_val = "22:00~"
                 day_list.append({"name": sel_name, "type": in_type, "val": save_val})
-                
                 records[d_key] = day_list
                 fresh_sch["records"] = records
                 set_data("schedule", fresh_sch)
@@ -289,7 +371,6 @@ with tab_my:
         for d, evts in records.items():
             if isinstance(evts, dict): evts = list(evts.values())
             elif isinstance(evts, list): evts = [x for x in evts if x]
-            
             for e in evts:
                 if isinstance(e, dict) and e.get('name') == sel_name:
                     e['date'] = d
@@ -309,17 +390,16 @@ with tab_my:
                     tgt_list = recs.get(log['date'], [])
                     if isinstance(tgt_list, dict): tgt_list = list(tgt_list.values())
                     elif isinstance(tgt_list, list): tgt_list = [x for x in tgt_list if x]
-                    
                     new_list = [r for r in tgt_list if not (r.get('name')==sel_name and r.get('type')==log['type'] and str(r.get('val'))==str(log['val']))]
                     recs[log['date']] = new_list
                     f_data["records"] = recs
                     set_data("schedule", f_data)
                     st.rerun()
 
+# 3. 분실물 탭
 with tab_lost:
     st.subheader("🧢 분실물 센터")
     raw_lost = get_data("lost_found")
-    # 분실물 데이터 정규화
     lost_items = []
     if isinstance(raw_lost, dict): lost_items = list(raw_lost.values())
     elif isinstance(raw_lost, list): lost_items = [x for x in raw_lost if x]
@@ -354,4 +434,3 @@ with tab_lost:
                     del lost_items[i]
                     set_data("lost_found", lost_items)
                     st.rerun()
-
