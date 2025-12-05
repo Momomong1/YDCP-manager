@@ -27,7 +27,7 @@ def check_password():
     if "PASSWORD" in st.secrets:
         system_pass = st.secrets["PASSWORD"]
     else:
-        system_pass = "0607"
+        system_pass = "1234"
     
     if st.session_state.password_input == system_pass:
         st.session_state.logged_in = True
@@ -63,7 +63,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- Firebase 초기화 (업그레이드됨) ---
+# --- Firebase 초기화 (Secrets 오류 해결) ---
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 CRED_PATH = os.path.join(CURRENT_DIR, CRED_FILENAME)
 
@@ -74,17 +74,14 @@ def init_firebase():
     # 1. Streamlit Cloud Secrets 확인
     if "firebase_key" in st.secrets:
         try:
-            # Secrets에서 가져온 값이 dict(TOML)인지 str(JSON)인지 확인
-            secret_val = st.secrets["firebase_key"]
-            
-            if isinstance(secret_val, dict):
-                # TOML 형식으로 입력된 경우 (이게 더 안정적임)
-                cred_info = dict(secret_val)
+            val = st.secrets["firebase_key"]
+            # 문자열(JSON)인지 딕셔너리(TOML)인지 확인하여 처리
+            if isinstance(val, str):
+                cred_info = json.loads(val)
             else:
-                # JSON 문자열로 입력된 경우
-                cred_info = json.loads(secret_val)
+                cred_info = dict(val)
             
-            # private_key의 줄바꿈 문자(\n) 처리 보정 (매우 중요)
+            # private_key 줄바꿈 보정
             if "private_key" in cred_info:
                 cred_info["private_key"] = cred_info["private_key"].replace("\\n", "\n")
 
@@ -92,7 +89,7 @@ def init_firebase():
             firebase_admin.initialize_app(cred, {'databaseURL': FIREBASE_DB_URL})
             return True
         except Exception as e:
-            st.error(f"Cloud Secrets 인증 오류: {e}")
+            st.error(f"Cloud 인증 오류: {e}")
             return False
 
     # 2. 로컬 파일 확인
@@ -102,9 +99,9 @@ def init_firebase():
             firebase_admin.initialize_app(cred, {'databaseURL': FIREBASE_DB_URL})
             return True
         except Exception as e:
-            st.error(f"로컬 파일 인증 오류: {e}")
+            st.error(f"로컬 인증 오류: {e}")
             return False
-            
+
     # 3. 비상용 파일 업로드
     st.warning("⚠️ 인증 파일을 찾을 수 없습니다.")
     uploaded = st.file_uploader("키 파일 업로드", type="json")
@@ -121,24 +118,30 @@ if not init_firebase(): st.stop()
 def get_data(path): return db.reference(f'yuldong_data/{path}').get()
 def set_data(path, data): db.reference(f'yuldong_data/{path}').set(data)
 
-# --- 데이터 안전 추출 ---
-def safe_get_teams(sch_data):
-    raw = sch_data.get("teams", {})
-    teams = {"1": [], "2": []}
-    if isinstance(raw, dict):
-        if isinstance(raw.get("1"), list): teams["1"] = raw["1"]
-        if isinstance(raw.get("2"), list): teams["2"] = raw["2"]
-    elif isinstance(raw, list):
-        if len(raw) > 1 and isinstance(raw[1], list): teams["1"] = raw[1]
-        if len(raw) > 2 and isinstance(raw[2], list): teams["2"] = raw[2]
-    return teams
+# --- [중요] 데이터 구조 보정 함수 (List 오류 해결) ---
+def normalize_data(data):
+    """Firebase가 리스트로 반환한 데이터를 딕셔너리로 강제 변환"""
+    if isinstance(data, list):
+        # 리스트 인덱스를 키 문자열("0", "1", ...)로 변환하여 딕셔너리로 만듦
+        # None 값은 제외
+        return {str(i): v for i, v in enumerate(data) if v is not None}
+    return data if data else {}
 
 # --- 달력 그리기 ---
 def draw_calendar(year, month, sch_data, my_filter=None):
-    records = sch_data.get("records", {})
-    teams = safe_get_teams(sch_data)
+    # 데이터 정규화 적용 (오류 방지)
+    records = normalize_data(sch_data.get("records", {}))
+    teams = normalize_data(sch_data.get("teams", {}))
+    month_rules = normalize_data(sch_data.get("month_rules", {}))
+    
+    # 1조, 2조 명단 추출
+    t1_list = teams.get("1", [])
+    t2_list = teams.get("2", [])
+    if isinstance(t1_list, str): t1_list = [t1_list] # 혹시 문자열이면 리스트로
+    if isinstance(t2_list, str): t2_list = [t2_list]
+
     month_key = f"{year}-{month:02d}"
-    rules = sch_data.get("month_rules", {}).get(month_key, {})
+    rules = month_rules.get(month_key, {})
     start_team = rules.get("start_team", "1")
     off1 = rules.get("t1_off", [4, 5]) 
     off2 = rules.get("t2_off", [6, 0]) 
@@ -158,16 +161,22 @@ def draw_calendar(year, month, sch_data, my_filter=None):
             
             curr_date = datetime(year, month, day)
             prev_str = (curr_date - timedelta(days=1)).strftime("%Y-%m-%d")
-            rest_members = []
-            if records and prev_str in records:
-                prev_recs = records[prev_str]
-                if isinstance(prev_recs, dict): prev_recs = list(prev_recs.values())
-                if isinstance(prev_recs, list):
-                    for r in prev_recs:
-                        if isinstance(r, dict) and r.get('type') == '당직': rest_members.append(r.get('name'))
             
-            t1_today = [m for m in teams["1"] if m not in rest_members]
-            t2_today = [m for m in teams["2"] if m not in rest_members]
+            # 전날 당직자 확인
+            rest_members = []
+            if prev_str in records:
+                prev_recs = records[prev_str]
+                # 리스트인 경우 정규화
+                if isinstance(prev_recs, dict): prev_recs = list(prev_recs.values())
+                elif isinstance(prev_recs, list): prev_recs = [x for x in prev_recs if x]
+                
+                for r in prev_recs:
+                    if isinstance(r, dict) and r.get('type') == '당직': 
+                        rest_members.append(r.get('name'))
+            
+            # 명단에서 제외
+            t1_today = [m for m in t1_list if m not in rest_members]
+            t2_today = [m for m in t2_list if m not in rest_members]
             t1_str, t2_str = ", ".join(t1_today), ", ".join(t2_today)
             
             work_html = ""
@@ -188,20 +197,21 @@ def draw_calendar(year, month, sch_data, my_filter=None):
 
             d_str = f"{year}-{month:02d}-{day:02d}"
             indiv_html = ""
-            if records and d_str in records:
+            if d_str in records:
                 day_recs = records[d_str]
                 if isinstance(day_recs, dict): day_recs = list(day_recs.values())
-                if isinstance(day_recs, list):
-                    for evt in day_recs:
-                        if not isinstance(evt, dict): continue
-                        if my_filter and my_filter != "전체 보기" and evt.get('name') != my_filter: continue
-                        e_type, e_name, e_val = evt.get('type',''), evt.get('name',''), evt.get('val','')
-                        cls, txt = "bg-gray", ""
-                        if e_type == "당직": cls, txt = "bg-night", f"{e_name} 당직"
-                        elif e_type == "연차": cls, txt = "bg-leave", f"{e_name} 연차"
-                        elif e_type == "시간외": cls, txt = "bg-ot", (f"{e_name} {e_val} 시간외" if e_val else f"{e_name} 시간외")
-                        else: txt = f"{e_name} {e_type}"
-                        indiv_html += f'<div class="badge {cls}">{txt}</div>'
+                elif isinstance(day_recs, list): day_recs = [x for x in day_recs if x]
+                
+                for evt in day_recs:
+                    if not isinstance(evt, dict): continue
+                    if my_filter and my_filter != "전체 보기" and evt.get('name') != my_filter: continue
+                    e_type, e_name, e_val = evt.get('type',''), evt.get('name',''), evt.get('val','')
+                    cls, txt = "bg-gray", ""
+                    if e_type == "당직": cls, txt = "bg-night", f"{e_name} 당직"
+                    elif e_type == "연차": cls, txt = "bg-leave", f"{e_name} 연차"
+                    elif e_type == "시간외": cls, txt = "bg-ot", (f"{e_name} {e_val} 시간외" if e_val else f"{e_name} 시간외")
+                    else: txt = f"{e_name} {e_type}"
+                    indiv_html += f'<div class="badge {cls}">{txt}</div>'
 
             num_cls = "sun" if c_idx==0 else "sat" if c_idx==6 else ""
             html += f'<div class="cal-cell"><div class="date-label {num_cls}">{day}</div>{work_html}{indiv_html}</div>'
@@ -228,9 +238,16 @@ with tab_cal:
         st.markdown(f"<h4 style='text-align:center; margin:0'>{cur.year}년 {cur.month}월</h4>", unsafe_allow_html=True)
     with c3: st.button("▶", on_click=change_month, args=(1,), use_container_width=True)
     
+    # 데이터 로드 및 정규화
     sch_data = get_data("schedule") or {}
-    teams_info = safe_get_teams(sch_data)
-    members = ["전체 보기"] + teams_info["1"] + teams_info["2"]
+    teams = normalize_data(sch_data.get("teams", {}))
+    
+    t1 = teams.get("1", [])
+    t2 = teams.get("2", [])
+    if isinstance(t1, str): t1 = [t1]
+    if isinstance(t2, str): t2 = [t2]
+    
+    members = ["전체 보기"] + t1 + t2
     my_filter = st.selectbox("표시 대상", members)
     draw_calendar(cur.year, cur.month, sch_data, my_filter)
     st.caption("※ 전날 당직자는 근무 명단에서 자동 제외됩니다.")
@@ -247,28 +264,36 @@ with tab_my:
             if st.form_submit_button("저장", type="primary", use_container_width=True):
                 d_key = in_date.strftime("%Y-%m-%d")
                 fresh_sch = get_data("schedule") or {}
+                
+                # 안전한 초기화 및 정규화
                 if "records" not in fresh_sch: fresh_sch["records"] = {}
-                if isinstance(fresh_sch["records"], list): fresh_sch["records"] = {}
-                day_list = fresh_sch["records"].get(d_key, [])
+                records = normalize_data(fresh_sch["records"])
+                
+                day_list = records.get(d_key, [])
                 if isinstance(day_list, dict): day_list = list(day_list.values())
+                elif isinstance(day_list, list): day_list = [x for x in day_list if x]
+                
                 save_val = in_val
                 if in_type == "당직" and not in_val: save_val = "22:00~"
                 day_list.append({"name": sel_name, "type": in_type, "val": save_val})
-                fresh_sch["records"][d_key] = day_list
+                
+                records[d_key] = day_list
+                fresh_sch["records"] = records
                 set_data("schedule", fresh_sch)
                 st.success("저장 완료!")
                 st.rerun()
         st.divider()
         st.write("🗑️ **최근 기록 삭제**")
         my_logs = []
-        records = sch_data.get("records", {})
-        if isinstance(records, dict):
-            for d, evts in records.items():
-                if isinstance(evts, list):
-                    for e in evts:
-                        if isinstance(e, dict) and e.get('name') == sel_name:
-                            e['date'] = d
-                            my_logs.append(e)
+        records = normalize_data(sch_data.get("records", {}))
+        for d, evts in records.items():
+            if isinstance(evts, dict): evts = list(evts.values())
+            elif isinstance(evts, list): evts = [x for x in evts if x]
+            
+            for e in evts:
+                if isinstance(e, dict) and e.get('name') == sel_name:
+                    e['date'] = d
+                    my_logs.append(e)
         my_logs.sort(key=lambda x: x['date'], reverse=True)
         if not my_logs: st.info("기록이 없습니다.")
         for log in my_logs[:5]:
@@ -280,19 +305,25 @@ with tab_my:
                 col_info.text(f"{log['date']} | {d_txt}")
                 if col_btn.button("삭제", key=f"del_{log['date']}_{log['type']}_{log['val']}"):
                     f_data = get_data("schedule")
-                    tgt_list = f_data["records"].get(log['date'], [])
-                    if isinstance(tgt_list, list):
-                        new_list = [r for r in tgt_list if not (r.get('name')==sel_name and r.get('type')==log['type'] and str(r.get('val'))==str(log['val']))]
-                        f_data["records"][log['date']] = new_list
-                        set_data("schedule", f_data)
-                        st.rerun()
+                    recs = normalize_data(f_data.get("records", {}))
+                    tgt_list = recs.get(log['date'], [])
+                    if isinstance(tgt_list, dict): tgt_list = list(tgt_list.values())
+                    elif isinstance(tgt_list, list): tgt_list = [x for x in tgt_list if x]
+                    
+                    new_list = [r for r in tgt_list if not (r.get('name')==sel_name and r.get('type')==log['type'] and str(r.get('val'))==str(log['val']))]
+                    recs[log['date']] = new_list
+                    f_data["records"] = recs
+                    set_data("schedule", f_data)
+                    st.rerun()
 
 with tab_lost:
     st.subheader("🧢 분실물 센터")
     raw_lost = get_data("lost_found")
+    # 분실물 데이터 정규화
     lost_items = []
-    if isinstance(raw_lost, list): lost_items = [x for x in raw_lost if x]
-    elif isinstance(raw_lost, dict): lost_items = list(raw_lost.values())
+    if isinstance(raw_lost, dict): lost_items = list(raw_lost.values())
+    elif isinstance(raw_lost, list): lost_items = [x for x in raw_lost if x]
+    
     with st.expander("➕ 분실물 등록하기", expanded=False):
         l_loc = st.text_input("장소")
         l_nm = st.text_input("물건명")
@@ -323,4 +354,3 @@ with tab_lost:
                     del lost_items[i]
                     set_data("lost_found", lost_items)
                     st.rerun()
-
