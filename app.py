@@ -227,7 +227,7 @@ def draw_calendar(year, month, sch_data, my_filter=None):
     
     # 1. 요일 헤더
     html = '<div class="cal-container"><div class="cal-header-row">'
-    days = ['일', '월', '화', '수', '목', '금', '토']
+    days = ['월', '화', '수', '목', '금', '토', '일']
     for i, d in enumerate(days):
         c = "sun" if i==0 else "sat" if i==6 else ""
         html += f'<div class="cal-header-item {c}">{d}</div>'
@@ -307,7 +307,7 @@ if st.sidebar.button("로그아웃"):
     st.session_state.logged_in = False
     st.rerun()
 
-tab_cal, tab_my, tab_lost = st.tabs(["📅 근무표", "✍️ 개인일정수정", "🧢 분실물"])
+tab_cal, tab_my, tab_lost = st.tabs(["📅 근무표", "✍️ 내 수정", "🧢 분실물"])
 
 # 1. 달력 탭
 with tab_cal:
