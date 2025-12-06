@@ -27,7 +27,7 @@ def check_password():
     if "PASSWORD" in st.secrets:
         system_pass = st.secrets["PASSWORD"]
     else:
-        system_pass = "1234"
+        system_pass = "0616"
     
     if st.session_state.password_input == system_pass:
         st.session_state.logged_in = True
@@ -268,7 +268,7 @@ if st.sidebar.button("로그아웃"):
     st.session_state.logged_in = False
     st.rerun()
 
-tab_cal, tab_my, tab_lost = st.tabs(["📅 근무표", "✍️ 내 수정", "🧢 분실물"])
+tab_cal, tab_my, tab_lost = st.tabs(["📅 근무표", "✍️ 개인근무 수정", "🧢 분실물"])
 
 # 1. 달력 탭
 with tab_cal:
@@ -395,3 +395,4 @@ with tab_lost:
                     del lost_items[i]
                     set_data("lost_found", lost_items)
                     st.rerun()
+
