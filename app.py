@@ -241,33 +241,111 @@ with tab_cal:
 with tab_my:
     st.subheader("근무 기록 수정")
     sel_name = st.selectbox("이름", [m for m in members if m != "전체 보기"])
+    
     if sel_name:
+        # --- [기록 추가 폼] ---
         with st.form("new_schedule"):
             c_d, c_t = st.columns(2)
             in_date = c_d.date_input("날짜")
             in_type = c_t.selectbox("구분", ["시간외", "당직", "연차"])
-            in_val = st.text_input("내용", placeholder="시간 등")
+            in_val = st.text_input("내용", placeholder="시간(4, 8) 또는 메모")
+            
             if st.form_submit_button("기록 저장", type="primary", use_container_width=True):
                 d_key = in_date.strftime("%Y-%m-%d")
                 fresh_sch = get_data("schedule") or {}
                 if "records" not in fresh_sch: fresh_sch["records"] = {}
                 records = normalize_data(fresh_sch["records"])
+                
                 day_list = records.get(d_key, [])
                 if isinstance(day_list, dict): day_list = list(day_list.values())
                 elif isinstance(day_list, list): day_list = [x for x in day_list if x]
                 
                 save_val = in_val
                 if in_type == "당직" and not in_val: save_val = "22:00~"
+                
                 day_list.append({"name": sel_name, "type": in_type, "val": save_val})
                 records[d_key] = day_list
                 fresh_sch["records"] = records
                 set_data("schedule", fresh_sch)
                 st.success("저장됨")
                 st.rerun()
+
+        st.divider()
+        st.write("🗑️ **최근 기록 삭제**")
+
+        # --- [삭제 로직 구현] ---
+        # 1. 전체 데이터에서 내 기록만 추출
+        sch_data = get_data("schedule") or {}
+        records = normalize_data(sch_data.get("records", {}))
         
-        # 삭제 UI는 간소화 (생략 가능하나 유지)
-        st.caption("최근 기록 (삭제 가능)")
-        # ... (삭제 로직은 위와 동일하므로 생략하거나 필요 시 유지)
+        my_logs = []
+        for d_key, evts in records.items():
+            # 데이터 정규화 (Firebase 리스트/딕셔너리 호환)
+            if isinstance(evts, dict): evts = list(evts.values())
+            elif isinstance(evts, list): evts = [x for x in evts if x]
+            
+            for e in evts:
+                if isinstance(e, dict) and e.get('name') == sel_name:
+                    # 화면 표시 및 삭제처리를 위해 날짜 정보를 임시로 담음
+                    temp_e = e.copy()
+                    temp_e['date'] = d_key
+                    my_logs.append(temp_e)
+        
+        # 2. 날짜 내림차순 정렬 (최신순)
+        my_logs.sort(key=lambda x: x['date'], reverse=True)
+
+        if not my_logs:
+            st.info("기록이 없습니다.")
+        
+        # 3. 최근 10개만 표시 및 삭제 버튼 생성
+        for i, log in enumerate(my_logs[:10]):
+            with st.container(border=True):
+                col_info, col_btn = st.columns([4, 1])
+                
+                # 표시 텍스트 다듬기
+                type_icon = {"시간외": "⏰", "당직": "🌙", "연차": "🌴"}.get(log['type'], "📝")
+                disp_text = f"{type_icon} {log['type']} | {log['val']}"
+                
+                with col_info:
+                    st.write(f"**{log['date']}**")
+                    st.caption(disp_text)
+                
+                with col_btn:
+                    # 고유한 key 생성 (날짜_타입_값_인덱스)
+                    unique_key = f"del_{log['date']}_{log['type']}_{log['val']}_{i}"
+                    
+                    if st.button("삭제", key=unique_key, use_container_width=True):
+                        # [실제 삭제 수행]
+                        # 1. 최신 데이터 다시 로드 (동시성 안전)
+                        fresh_sch = get_data("schedule") or {}
+                        fresh_recs = normalize_data(fresh_sch.get("records", {}))
+                        
+                        target_day_list = fresh_recs.get(log['date'], [])
+                        
+                        # 리스트 정규화
+                        if isinstance(target_day_list, dict): target_day_list = list(target_day_list.values())
+                        elif isinstance(target_day_list, list): target_day_list = [x for x in target_day_list if x]
+                        
+                        # 2. 해당 항목을 제외한 리스트 새로 생성 (필터링)
+                        new_day_list = []
+                        deleted = False
+                        for item in target_day_list:
+                            # 이름, 타입, 내용이 모두 같으면 삭제 대상 (첫 1회만 삭제)
+                            if (not deleted and
+                                item.get('name') == sel_name and 
+                                item.get('type') == log['type'] and 
+                                str(item.get('val')) == str(log['val'])):
+                                deleted = True # 중복된 내용이 있어도 하나만 삭제
+                                continue
+                            new_day_list.append(item)
+                        
+                        # 3. DB 업데이트
+                        fresh_recs[log['date']] = new_day_list
+                        fresh_sch["records"] = fresh_recs
+                        set_data("schedule", fresh_sch)
+                        
+                        st.success("삭제되었습니다.")
+                        st.rerun()
 
 # 3. [신규] 연박자 보기 탭
 with tab_stay:
@@ -377,4 +455,6 @@ with tab_lost:
                         del lost_items[i]
                         set_data("lost_found", lost_items)
                         st.rerun()
+                        st.rerun()
+
 
