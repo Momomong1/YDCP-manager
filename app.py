@@ -11,7 +11,7 @@ CRED_FILENAME = "service.json"
 FIREBASE_DB_URL = 'https://ydcpmanager-default-rtdb.firebaseio.com/'
 
 st.set_page_config(
-    page_title="율동공원 모바일", 
+    page_title="율동공원 통합관리", 
     page_icon="📅", 
     layout="wide",
     initial_sidebar_state="collapsed"
@@ -395,4 +395,5 @@ with tab_lost:
                     del lost_items[i]
                     set_data("lost_found", lost_items)
                     st.rerun()
+
 
