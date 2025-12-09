@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 import calendar
 import os
 import json
+import re
 
 # --- 기본 설정 ---
 CRED_FILENAME = "service.json"
@@ -67,7 +68,10 @@ st.markdown("""
     .wb-b { background-color: #fff4e6; border: 1px solid #ffe8cc; color: #d9480f; }
     .wb-rest { background-color: #ffe3e3; color: #c92a2a; text-align: center; }
     .badge { font-size: 0.7rem; padding: 2px 4px; border-radius: 3px; margin-top: 1px; color: white; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
-    .bg-night { background-color: #1E3A8A; } .bg-leave { background-color: #10B981; } .bg-ot { background-color: #EF4444; } .bg-gray { background-color: #868e96; }
+    .bg-night { background-color: #D32F2F; } /* 빨강 */
+    .bg-leave { background-color: #2E7D32; } /* 초록 */
+    .bg-ot { background-color: #1A237E; }    /* 진한 파랑 */
+    .bg-gray { background-color: #868e96; }
     
     /* 모바일 반응형 */
     @media (max-width: 600px) { 
@@ -151,9 +155,13 @@ def draw_calendar(year, month, sch_data, my_filter=None):
                 continue
             
             curr_date = datetime(year, month, day)
-            prev_str = (curr_date - timedelta(days=1)).strftime("%Y-%m-%d")
+            date_str = f"{year}-{month:02d}-{day:02d}"
             
+            # --- 휴무자 제외 로직 ---
+            # 1. 어제 당직자
+            prev_str = (curr_date - timedelta(days=1)).strftime("%Y-%m-%d")
             rest_members = []
+            
             if prev_str in records:
                 prev_recs = records[prev_str]
                 if isinstance(prev_recs, dict): prev_recs = list(prev_recs.values())
@@ -162,10 +170,20 @@ def draw_calendar(year, month, sch_data, my_filter=None):
                     if isinstance(r, dict) and r.get('type') == '당직': 
                         rest_members.append(r.get('name'))
             
+            # 2. 오늘 '당직휴무' 또는 '휴무' 기록자
+            if date_str in records:
+                today_recs = records[date_str]
+                if isinstance(today_recs, dict): today_recs = list(today_recs.values())
+                elif isinstance(today_recs, list): today_recs = [x for x in today_recs if x]
+                for r in today_recs:
+                    if r.get('type') in ['당직휴무', '휴무']:
+                        rest_members.append(r.get('name'))
+
             t1_today = [m for m in t1_list if m not in rest_members]
             t2_today = [m for m in t2_list if m not in rest_members]
             t1_str, t2_str = ", ".join(t1_today), ", ".join(t2_today)
             
+            # --- 근무 박스 ---
             work_html = ""
             weekday = curr_date.weekday() 
             is_t1_off, is_t2_off = (weekday in off1), (weekday in off2)
@@ -183,20 +201,25 @@ def draw_calendar(year, month, sch_data, my_filter=None):
             else:
                 work_html += '<div class="work-box wb-rest">휴무</div>'
 
-            d_str = f"{year}-{month:02d}-{day:02d}"
+            # --- 개인 일정 뱃지 ---
             indiv_html = ""
-            if d_str in records:
-                day_recs = records[d_str]
+            if date_str in records:
+                day_recs = records[date_str]
                 if isinstance(day_recs, dict): day_recs = list(day_recs.values())
                 elif isinstance(day_recs, list): day_recs = [x for x in day_recs if x]
                 for evt in day_recs:
                     if not isinstance(evt, dict): continue
                     if my_filter and my_filter != "전체 보기" and evt.get('name') != my_filter: continue
                     e_type, e_name, e_val = evt.get('type',''), evt.get('name',''), evt.get('val','')
+                    
+                    if e_type in ["당직휴무", "휴무", "팀휴무"]: continue # 표시 안 함
+
                     cls, txt = "bg-gray", ""
-                    if e_type == "당직": cls, txt = "bg-night", f"🌙{e_name}"
-                    elif e_type == "연차": cls, txt = "bg-leave", f"🌴{e_name}"
-                    elif e_type == "시간외": cls, txt = "bg-ot", f"⏰{e_name}"
+                    if e_type == "당직": cls, txt = "bg-night", f"{e_name} 당직"
+                    elif e_type == "연차": cls, txt = "bg-leave", f"{e_name} 연차"
+                    elif e_type == "시간외": cls, txt = "bg-ot", f"{e_name} {e_val if e_val else ''} 시간외"
+                    else: txt = f"{e_name} {e_type}"
+                    
                     indiv_html += f'<div class="badge {cls}">{txt}</div>'
 
             html += f'<div class="cal-cell"><div class="date-num">{day}</div>{work_html}{indiv_html}</div>'
@@ -209,7 +232,7 @@ if st.sidebar.button("로그아웃"):
     st.session_state.logged_in = False
     st.rerun()
 
-# 탭 5개로 확장
+# 탭 5개
 tab_cal, tab_my, tab_stay, tab_mon, tab_lost = st.tabs(["📅 근무", "✍️ 수정", "⛺ 연박", "📊 현황", "🧢 분실"])
 
 # 1. 근무표 탭
@@ -237,13 +260,56 @@ with tab_cal:
     my_filter = st.selectbox("직원별 보기", members, label_visibility="collapsed")
     draw_calendar(cur.year, cur.month, sch_data, my_filter)
 
+    # -------------------------------------------------------------
+    # [추가된 기능] 날짜별 일정 삭제 기능
+    # -------------------------------------------------------------
+    st.divider()
+    with st.expander("🛠️ 날짜별 일정 관리 (삭제)", expanded=False):
+        st.caption("달력에서 날짜를 확인하고, 삭제할 날짜를 선택하세요.")
+        
+        # 날짜 선택
+        del_date = st.date_input("관리할 날짜 선택", value=cur)
+        del_key = del_date.strftime("%Y-%m-%d")
+        
+        # 해당 날짜 데이터 가져오기
+        all_recs = normalize_data(sch_data.get("records", {}))
+        target_list = all_recs.get(del_key, [])
+        if isinstance(target_list, dict): target_list = list(target_list.values())
+        elif isinstance(target_list, list): target_list = [x for x in target_list if x]
+        
+        if not target_list:
+            st.info(f"{del_key}에는 등록된 일정이 없습니다.")
+        else:
+            st.write(f"**{del_key} 등록된 일정**")
+            for i, rec in enumerate(target_list):
+                with st.container(border=True):
+                    cols = st.columns([4, 1])
+                    # 아이콘
+                    icon = "📝"
+                    if rec['type'] == '당직': icon = "🌙"
+                    elif rec['type'] == '연차': icon = "🌴"
+                    elif rec['type'] == '시간외': icon = "⏰"
+                    
+                    with cols[0]:
+                        st.write(f"{icon} **{rec['name']}** - {rec['type']} ({rec.get('val', '')})")
+                    
+                    with cols[1]:
+                        # 삭제 버튼 (고유 키 사용)
+                        if st.button("삭제", key=f"del_cal_{del_key}_{i}", use_container_width=True):
+                            # 삭제 로직
+                            del target_list[i]
+                            all_recs[del_key] = target_list
+                            sch_data["records"] = all_recs
+                            set_data("schedule", sch_data)
+                            st.success("삭제되었습니다!")
+                            st.rerun()
+
 # 2. 내 수정 탭
 with tab_my:
     st.subheader("근무 기록 수정")
     sel_name = st.selectbox("이름", [m for m in members if m != "전체 보기"])
     
     if sel_name:
-        # --- [기록 추가 폼] ---
         with st.form("new_schedule"):
             c_d, c_t = st.columns(2)
             in_date = c_d.date_input("날짜")
@@ -271,38 +337,31 @@ with tab_my:
                 st.rerun()
 
         st.divider()
-        st.write("🗑️ **최근 기록 삭제**")
+        st.write("🗑️ **내 최근 기록 삭제**")
 
-        # --- [삭제 로직 구현] ---
-        # 1. 전체 데이터에서 내 기록만 추출
+        # --- [내 기록 삭제 로직] ---
         sch_data = get_data("schedule") or {}
         records = normalize_data(sch_data.get("records", {}))
         
         my_logs = []
         for d_key, evts in records.items():
-            # 데이터 정규화 (Firebase 리스트/딕셔너리 호환)
             if isinstance(evts, dict): evts = list(evts.values())
             elif isinstance(evts, list): evts = [x for x in evts if x]
             
             for e in evts:
                 if isinstance(e, dict) and e.get('name') == sel_name:
-                    # 화면 표시 및 삭제처리를 위해 날짜 정보를 임시로 담음
                     temp_e = e.copy()
                     temp_e['date'] = d_key
                     my_logs.append(temp_e)
         
-        # 2. 날짜 내림차순 정렬 (최신순)
         my_logs.sort(key=lambda x: x['date'], reverse=True)
 
         if not my_logs:
             st.info("기록이 없습니다.")
         
-        # 3. 최근 10개만 표시 및 삭제 버튼 생성
         for i, log in enumerate(my_logs[:10]):
             with st.container(border=True):
                 col_info, col_btn = st.columns([4, 1])
-                
-                # 표시 텍스트 다듬기
                 type_icon = {"시간외": "⏰", "당직": "🌙", "연차": "🌴"}.get(log['type'], "📝")
                 disp_text = f"{type_icon} {log['type']} | {log['val']}"
                 
@@ -311,43 +370,34 @@ with tab_my:
                     st.caption(disp_text)
                 
                 with col_btn:
-                    # 고유한 key 생성 (날짜_타입_값_인덱스)
                     unique_key = f"del_{log['date']}_{log['type']}_{log['val']}_{i}"
                     
                     if st.button("삭제", key=unique_key, use_container_width=True):
-                        # [실제 삭제 수행]
-                        # 1. 최신 데이터 다시 로드 (동시성 안전)
                         fresh_sch = get_data("schedule") or {}
                         fresh_recs = normalize_data(fresh_sch.get("records", {}))
-                        
                         target_day_list = fresh_recs.get(log['date'], [])
                         
-                        # 리스트 정규화
                         if isinstance(target_day_list, dict): target_day_list = list(target_day_list.values())
                         elif isinstance(target_day_list, list): target_day_list = [x for x in target_day_list if x]
                         
-                        # 2. 해당 항목을 제외한 리스트 새로 생성 (필터링)
                         new_day_list = []
                         deleted = False
                         for item in target_day_list:
-                            # 이름, 타입, 내용이 모두 같으면 삭제 대상 (첫 1회만 삭제)
                             if (not deleted and
                                 item.get('name') == sel_name and 
                                 item.get('type') == log['type'] and 
                                 str(item.get('val')) == str(log['val'])):
-                                deleted = True # 중복된 내용이 있어도 하나만 삭제
+                                deleted = True
                                 continue
                             new_day_list.append(item)
                         
-                        # 3. DB 업데이트
                         fresh_recs[log['date']] = new_day_list
                         fresh_sch["records"] = fresh_recs
                         set_data("schedule", fresh_sch)
-                        
                         st.success("삭제되었습니다.")
                         st.rerun()
 
-# 3. [신규] 연박자 보기 탭
+# 3. 연박자 보기 탭
 with tab_stay:
     st.subheader("⛺ 연박 및 이동 현황")
     stay_data = get_data("stay_result")
@@ -361,17 +411,15 @@ with tab_stay:
             st.success("연박/이동 내역이 없습니다.")
         else:
             for item in items:
-                # "방이동" 키워드가 있으면 경고색, 연박이면 파란색
                 if "방이동" in item or "➡" in item:
                     st.warning(item)
                 else:
                     st.info(item)
-            
             st.caption("※ 데이터는 PC 프로그램에서 분석 후 자동 반영됩니다.")
     else:
         st.warning("데이터가 없습니다. PC 프로그램에서 분석을 실행해주세요.")
 
-# 4. [신규] 입실 현황 탭
+# 4. 입실 현황 탭
 with tab_mon:
     st.subheader("📊 예약 및 입실 현황")
     mon_data = get_data("monitor_result")
@@ -387,9 +435,7 @@ with tab_mon:
         col3.metric("대기(초록)", f"{summ.get('nocheck',0)}건")
         
         st.divider()
-        
         zones = mon_data.get("zones", {})
-        # A~F 구역별 표시
         for z_name in ["A", "B", "C", "D", "E", "F", "기타"]:
             if z_name not in zones: continue
             
@@ -400,11 +446,9 @@ with tab_mon:
             if not blues and not greens: continue
             
             with st.expander(f"📍 {z_name} 구역 ({len(blues)+len(greens)}건)", expanded=True):
-                # 입실 완료 (파랑)
                 if blues:
                     for b in blues:
                         st.markdown(f"<div class='stat-card stat-blue'>{b}</div>", unsafe_allow_html=True)
-                # 미입실 (초록)
                 if greens:
                     for g in greens:
                         st.markdown(f"<div class='stat-card stat-green'>{g}</div>", unsafe_allow_html=True)
@@ -419,7 +463,6 @@ with tab_lost:
     if isinstance(raw_lost, dict): lost_items = list(raw_lost.values())
     elif isinstance(raw_lost, list): lost_items = [x for x in raw_lost if x]
     
-    # 등록 UI
     with st.expander("➕ 분실물 등록", expanded=False):
         c1, c2 = st.columns(2)
         l_loc = c1.text_input("장소")
@@ -431,7 +474,6 @@ with tab_lost:
                 set_data("lost_found", lost_items)
                 st.rerun()
 
-    # 리스트 표시
     cnt = len([x for x in lost_items if x.get('status')=='보관중'])
     st.markdown(f"**보관중: {cnt}개**")
     
@@ -455,6 +497,3 @@ with tab_lost:
                         del lost_items[i]
                         set_data("lost_found", lost_items)
                         st.rerun()
-                        st.rerun()
-
-
