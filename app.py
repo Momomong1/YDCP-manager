@@ -49,36 +49,102 @@ st.markdown("""
 <style>
     .stApp { font-family: 'Pretendard', 'Malgun Gothic', sans-serif; }
     
-    /* 캘린더 스타일 */
-    .cal-container { display: flex; flex-direction: column; border: 1px solid #ddd; background-color: #fff; }
-    .cal-header-row { display: grid; grid-template-columns: repeat(7, 1fr); background-color: #f1f3f5; border-bottom: 1px solid #ddd; }
-    .cal-header-item { text-align: center; font-weight: bold; padding: 5px 0; font-size: 0.9rem; color: #333; }
+    /* 캘린더 컨테이너 */
+    .cal-container { 
+        display: flex; 
+        flex-direction: column; 
+        border: 1px solid #ddd; 
+        background-color: #fff; 
+        border-radius: 8px; /* 둥근 모서리 추가 */
+        overflow: hidden; 
+    }
+    
+    /* 요일 헤더 */
+    .cal-header-row { 
+        display: grid; 
+        grid-template-columns: repeat(7, 1fr); 
+        background-color: #f8f9fa; 
+        border-bottom: 1px solid #ddd; 
+    }
+    .cal-header-item { 
+        text-align: center; 
+        font-weight: bold; 
+        padding: 8px 0; 
+        font-size: 0.9rem; 
+        color: #495057; 
+    }
     .cal-header-item:nth-child(6) { color: #1c7ed6; }
     .cal-header-item:nth-child(7) { color: #e03131; }
-    .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); background-color: #e9ecef; gap: 1px; }
-    .cal-cell { background-color: #ffffff; min-height: 80px; padding: 2px; display: flex; flex-direction: column; }
-    .cal-cell.empty { background-color: #f8f9fa; }
-    .date-num { font-size: 0.8rem; font-weight: bold; margin-bottom: 2px; padding-left: 2px; color: #333; }
+    
+    /* 날짜 그리드 */
+    .cal-grid { 
+        display: grid; 
+        grid-template-columns: repeat(7, 1fr); 
+        background-color: #dee2e6; /* 그리드 선 색상 */
+        gap: 1px; 
+    }
+    
+    /* 개별 날짜 셀 (핵심 수정) */
+    .cal-cell { 
+        background-color: #ffffff; 
+        min-height: 60px; /* 기본 높이 줄임 */
+        height: auto;     /* 내용에 따라 늘어남 */
+        padding: 4px 2px; 
+        display: flex; 
+        flex-direction: column; 
+        gap: 2px;         /* 항목 간 간격 */
+    }
+    .cal-cell.empty { background-color: #f8f9fa; min-height: 60px; }
+    
+    /* 날짜 숫자 */
+    .date-num { 
+        font-size: 0.8rem; 
+        font-weight: bold; 
+        margin-bottom: 2px; 
+        padding-left: 4px; 
+        color: #333; 
+    }
     .cal-cell:nth-child(7n-1) .date-num { color: #1c7ed6; }
     .cal-cell:nth-child(7n) .date-num { color: #e03131; }
 
-    /* 근무자 뱃지 */
-    .work-box { font-size: 0.7rem; padding: 2px 4px; margin-bottom: 2px; border-radius: 4px; line-height: 1.2; color: #333; font-weight: 500; word-break: keep-all; }
+    /* 근무 조 박스 */
+    .work-box { 
+        font-size: 0.75rem; 
+        padding: 3px 4px; 
+        border-radius: 4px; 
+        line-height: 1.3; 
+        color: #333; 
+        font-weight: 500; 
+        word-break: keep-all; /* 단어 단위 줄바꿈 */
+        white-space: normal;  /* 줄바꿈 허용 */
+    }
     .wb-a { background-color: #e7f5ff; border: 1px solid #d0ebff; color: #1864ab; }
     .wb-b { background-color: #fff4e6; border: 1px solid #ffe8cc; color: #d9480f; }
     .wb-rest { background-color: #ffe3e3; color: #c92a2a; text-align: center; }
-    .badge { font-size: 0.7rem; padding: 2px 4px; border-radius: 3px; margin-top: 1px; color: white; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
-    .bg-night { background-color: #D32F2F; } /* 빨강 */
-    .bg-leave { background-color: #2E7D32; } /* 초록 */
-    .bg-ot { background-color: #1A237E; }    /* 진한 파랑 */
+    
+    /* 개인 일정 뱃지 */
+    .badge { 
+        font-size: 0.7rem; 
+        padding: 3px 4px; 
+        border-radius: 4px; 
+        margin-top: 1px; 
+        color: white; 
+        display: block; 
+        white-space: normal; /* 줄바꿈 허용 */
+        line-height: 1.2;
+    }
+    .bg-night { background-color: #D32F2F; } 
+    .bg-leave { background-color: #2E7D32; } 
+    .bg-ot { background-color: #1A237E; }    
     .bg-gray { background-color: #868e96; }
     
-    /* 모바일 반응형 */
+    /* 모바일 반응형 (더 작게 최적화) */
     @media (max-width: 600px) { 
-        .cal-header-item { font-size: 0.75rem; padding: 3px 0; } 
-        .cal-cell { min-height: 65px; padding: 1px; } 
-        .date-num { font-size: 0.7rem; } 
-        .work-box, .badge { font-size: 0.6rem; padding: 1px 2px; } 
+        .cal-header-item { font-size: 0.7rem; padding: 4px 0; } 
+        .cal-cell { min-height: 50px; padding: 2px; } 
+        .date-num { font-size: 0.7rem; margin-bottom: 1px; } 
+        .work-box { font-size: 0.65rem; padding: 2px 3px; letter-spacing: -0.5px; } 
+        .badge { font-size: 0.65rem; padding: 2px 3px; letter-spacing: -0.5px; } 
     }
     
     /* 현황판 스타일 */
@@ -497,3 +563,4 @@ with tab_lost:
                         del lost_items[i]
                         set_data("lost_found", lost_items)
                         st.rerun()
+
