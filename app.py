@@ -12,7 +12,7 @@ CRED_FILENAME = "service.json"
 FIREBASE_DB_URL = 'https://ydcpmanager-default-rtdb.firebaseio.com/'
 
 st.set_page_config(
-    page_title="율동공원 모바일", 
+    page_title="율동공원 관리", 
     page_icon="⛺", 
     layout="wide",
     initial_sidebar_state="collapsed"
@@ -283,7 +283,7 @@ def draw_calendar(year, month, sch_data, my_filter=None):
                     cls, txt = "bg-gray", ""
                     if e_type == "당직": cls, txt = "bg-night", f"{e_name} 당직"
                     elif e_type == "연차": cls, txt = "bg-leave", f"{e_name} 연차"
-                    elif e_type == "시간외": cls, txt = "bg-ot", f"{e_name} {e_val if e_val else ''} 시간외"
+                    elif e_type == "시간외": cls, txt = "bg-ot", f"{e_name} {e_val if e_val else ''}"
                     else: txt = f"{e_name} {e_type}"
                     
                     indiv_html += f'<div class="badge {cls}">{txt}</div>'
@@ -563,4 +563,5 @@ with tab_lost:
                         del lost_items[i]
                         set_data("lost_found", lost_items)
                         st.rerun()
+
 
