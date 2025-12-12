@@ -281,8 +281,8 @@ def draw_calendar(year, month, sch_data, my_filter=None):
                     if e_type in ["당직휴무", "휴무", "팀휴무"]: continue # 표시 안 함
 
                     cls, txt = "bg-gray", ""
-                    if e_type == "당직": cls, txt = "bg-night", f"{e_name} 당직"
-                    elif e_type == "연차": cls, txt = "bg-leave", f"{e_name} 연차"
+                    if e_type == "당직": cls, txt = "bg-night", f"🌙 {e_name}"
+                    elif e_type == "연차": cls, txt = "bg-leave", f"🌴 {e_name}"
                     elif e_type == "시간외": cls, txt = "bg-ot", f"{e_name} {e_val if e_val else ''}"
                     else: txt = f"{e_name} {e_type}"
                     
@@ -563,5 +563,6 @@ with tab_lost:
                         del lost_items[i]
                         set_data("lost_found", lost_items)
                         st.rerun()
+
 
 
