@@ -372,18 +372,74 @@ with tab_cal:
 
 # 2. 내 수정 탭
 with tab_my:
-    st.subheader("근무 기록 수정")
-    sel_name = st.selectbox("이름", [m for m in members if m != "전체 보기"])
+    st.subheader("근무 기록 관리")
+    
+    # 1. 대상자 선택
+    sel_name = st.selectbox("직원 선택", [m for m in members if m != "전체 보기"])
     
     if sel_name:
+        # --- [NEW] 이번 달 합계 통계 표시 ---
+        cur_y, cur_m = cur.year, cur.month # 현재 보고 있는 달력 기준
+        month_prefix = f"{cur_y}-{cur_m:02d}"
+        
+        # 전체 데이터 가져오기
+        sch_data = get_data("schedule") or {}
+        all_recs = normalize_data(sch_data.get("records", {}))
+        
+        # 합계 계산
+        sum_ot = 0.0   # 시간외
+        sum_leave = 0.0 # 연차
+        cnt_night = 0   # 당직 횟수
+        
+        for d_key, evts in all_recs.items():
+            # 해당 월의 데이터만 필터링
+            if not d_key.startswith(month_prefix): continue
+            
+            if isinstance(evts, dict): evts = list(evts.values())
+            elif isinstance(evts, list): evts = [x for x in evts if x]
+            
+            for e in evts:
+                if isinstance(e, dict) and e.get('name') == sel_name:
+                    etype = e.get('type')
+                    eval_str = str(e.get('val', '0'))
+                    
+                    # 숫자 추출 (정규식)
+                    nums = re.findall(r"[-+]?\d*\.\d+|\d+", eval_str)
+                    val = float(nums[0]) if nums else 0.0
+                    
+                    if etype == '시간외': sum_ot += val
+                    elif etype == '연차': sum_leave += val
+                    elif etype == '당직': cnt_night += 1
+
+        # 통계 카드 출력 (색상 박스)
+        st.markdown(f"##### 📊 {cur_y}년 {cur_m}월 {sel_name}님 합계")
+        c1, c2, c3 = st.columns(3)
+        c1.markdown(f"<div style='background:#E3F2FD;padding:10px;border-radius:5px;text-align:center;border:1px solid #90CAF9'>"
+                    f"<div style='font-size:0.8rem;color:#1565C0'>⏰ 시간외</div>"
+                    f"<div style='font-size:1.2rem;font-weight:bold;color:#0D47A1'>{sum_ot:g}H</div></div>", unsafe_allow_html=True)
+        
+        c2.markdown(f"<div style='background:#E8F5E9;padding:10px;border-radius:5px;text-align:center;border:1px solid #A5D6A7'>"
+                    f"<div style='font-size:0.8rem;color:#2E7D32'>🌴 연차</div>"
+                    f"<div style='font-size:1.2rem;font-weight:bold;color:#1B5E20'>{sum_leave:g}H</div></div>", unsafe_allow_html=True)
+        
+        c3.markdown(f"<div style='background:#FFEBEE;padding:10px;border-radius:5px;text-align:center;border:1px solid #FFCDD2'>"
+                    f"<div style='font-size:0.8rem;color:#C62828'>🌙 당직</div>"
+                    f"<div style='font-size:1.2rem;font-weight:bold;color:#B71C1C'>{cnt_night}회</div></div>", unsafe_allow_html=True)
+        
+        st.divider()
+
+        # --- [기존] 기록 추가 폼 ---
+        st.write("📝 **새로운 기록 추가**")
         with st.form("new_schedule"):
             c_d, c_t = st.columns(2)
-            in_date = c_d.date_input("날짜")
+            in_date = c_d.date_input("날짜", value=datetime.now())
             in_type = c_t.selectbox("구분", ["시간외", "당직", "연차"])
             in_val = st.text_input("내용", placeholder="시간(4, 8) 또는 메모")
             
-            if st.form_submit_button("기록 저장", type="primary", use_container_width=True):
+            if st.form_submit_button("저장하기", type="primary", use_container_width=True):
                 d_key = in_date.strftime("%Y-%m-%d")
+                
+                # 데이터 갱신을 위해 다시 로드 (동시성)
                 fresh_sch = get_data("schedule") or {}
                 if "records" not in fresh_sch: fresh_sch["records"] = {}
                 records = normalize_data(fresh_sch["records"])
@@ -399,18 +455,16 @@ with tab_my:
                 records[d_key] = day_list
                 fresh_sch["records"] = records
                 set_data("schedule", fresh_sch)
-                st.success("저장됨")
+                st.success("저장되었습니다.")
                 st.rerun()
 
+        # --- [기존] 기록 삭제 리스트 ---
         st.divider()
-        st.write("🗑️ **내 최근 기록 삭제**")
-
-        # --- [내 기록 삭제 로직] ---
-        sch_data = get_data("schedule") or {}
-        records = normalize_data(sch_data.get("records", {}))
+        st.write("🗑️ **최근 기록 삭제**")
         
+        # 내 기록 필터링
         my_logs = []
-        for d_key, evts in records.items():
+        for d_key, evts in all_recs.items():
             if isinstance(evts, dict): evts = list(evts.values())
             elif isinstance(evts, list): evts = [x for x in evts if x]
             
@@ -439,6 +493,7 @@ with tab_my:
                     unique_key = f"del_{log['date']}_{log['type']}_{log['val']}_{i}"
                     
                     if st.button("삭제", key=unique_key, use_container_width=True):
+                        # 삭제를 위해 최신 데이터 다시 로드
                         fresh_sch = get_data("schedule") or {}
                         fresh_recs = normalize_data(fresh_sch.get("records", {}))
                         target_day_list = fresh_recs.get(log['date'], [])
@@ -449,6 +504,7 @@ with tab_my:
                         new_day_list = []
                         deleted = False
                         for item in target_day_list:
+                            # 동일한 항목 하나만 삭제
                             if (not deleted and
                                 item.get('name') == sel_name and 
                                 item.get('type') == log['type'] and 
@@ -563,6 +619,7 @@ with tab_lost:
                         del lost_items[i]
                         set_data("lost_found", lost_items)
                         st.rerun()
+
 
 
 
