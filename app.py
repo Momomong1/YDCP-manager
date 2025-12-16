@@ -324,9 +324,9 @@ def draw_calendar(year, month, sch_data, my_filter=None):
                 if duty_a: work_html += f'<div class="work-box wb-a">A {duty_a}</div>'
                 if duty_b: work_html += f'<div class="work-box wb-b">B {duty_b}</div>'
             elif is_t1_off and not is_t2_off:
-                if t2_str: work_html += f'<div class="work-box wb-b">통합 {t2_str}</div>'
+                if t2_str: work_html += f'<div class="work-box wb-b"> {t2_str}</div>'
             elif is_t2_off and not is_t1_off:
-                if t1_str: work_html += f'<div class="work-box wb-a">통합 {t1_str}</div>'
+                if t1_str: work_html += f'<div class="work-box wb-a"> {t1_str}</div>'
             else:
                 work_html += '<div class="work-box wb-rest">휴무</div>'
 
@@ -344,9 +344,9 @@ def draw_calendar(year, month, sch_data, my_filter=None):
                     if e_type in ["당직휴무", "휴무", "팀휴무"]: continue 
 
                     cls, txt = "bg-gray", ""
-                    if e_type == "당직": cls, txt = "bg-night", f"{e_name} 당직"
-                    elif e_type == "연차": cls, txt = "bg-leave", f"{e_name} 연차"
-                    elif e_type == "시간외": cls, txt = "bg-ot", f"{e_name} {e_val if e_val else ''} 시간외"
+                    if e_type == "당직": cls, txt = "bg-night", 🌙f"{e_name}"
+                    elif e_type == "연차": cls, txt = "bg-leave", 🌴f"{e_name}"
+                    elif e_type == "시간외": cls, txt = "bg-ot", ⏰f"{e_name} {e_val if e_val else ''}"
                     else: txt = f"{e_name} {e_type}"
                     
                     indiv_html += f'<div class="badge {cls}">{txt}</div>'
@@ -695,6 +695,7 @@ with tab_lost:
                         del lost_items[i]
                         set_data("lost_found", lost_items)
                         st.rerun()
+
 
 
 
