@@ -8,7 +8,9 @@ import json
 import re
 
 # --- 기본 설정 ---
-CRED_FILENAME = "service.json"
+# Assuming 'service.json' is in the same directory. 
+# Best practice for Streamlit Cloud is to use st.secrets.
+CRED_FILENAME = "service.json" 
 FIREBASE_DB_URL = 'https://ydcpmanager-default-rtdb.firebaseio.com/'
 
 st.set_page_config(
@@ -28,6 +30,7 @@ def check_password():
     if "PASSWORD" in st.secrets:
         system_pass = st.secrets["PASSWORD"]
     else:
+        # Fallback password if secrets are not set
         system_pass = "0616"
     
     if st.session_state.password_input == system_pass:
@@ -150,23 +153,33 @@ CRED_PATH = os.path.join(CURRENT_DIR, CRED_FILENAME)
 
 @st.cache_resource
 def init_firebase():
+    # If app is already initialized, return True
     if firebase_admin._apps: return True
+    
+    # Try initializing from Streamlit secrets (Cloud deployment)
     if "firebase_key" in st.secrets:
         try:
             val = st.secrets["firebase_key"]
             if isinstance(val, str): cred_info = json.loads(val)
             else: cred_info = dict(val)
-            if "private_key" in cred_info: cred_info["private_key"] = cred_info["private_key"].replace("\\n", "\n")
+            
+            # Handle private key formatting issues
+            if "private_key" in cred_info: 
+                cred_info["private_key"] = cred_info["private_key"].replace("\\n", "\n")
+            
             cred = credentials.Certificate(cred_info)
             firebase_admin.initialize_app(cred, {'databaseURL': FIREBASE_DB_URL})
             return True
         except Exception as e: st.error(f"Cloud 인증 오류: {e}"); return False
+    
+    # Try initializing from local file
     if os.path.exists(CRED_PATH):
         try:
             cred = credentials.Certificate(CRED_PATH)
             firebase_admin.initialize_app(cred, {'databaseURL': FIREBASE_DB_URL})
             return True
         except Exception as e: st.error(f"로컬 인증 오류: {e}"); return False
+    
     st.warning("⚠️ 인증 파일을 찾을 수 없습니다.")
     return False
 
@@ -390,58 +403,68 @@ with tab_cal:
     draw_calendar(cur.year, cur.month, sch_data, my_filter)
 
     # -------------------------------------------------------------
-    # [수정됨] 날짜별 일정 관리 (자동 동기화 및 휴무 추가 기능)
+    # [수정된 코드] 날짜별 일정 관리 (안전한 삭제 로직 적용)
     # -------------------------------------------------------------
     st.divider()
     with st.expander("🛠️ 날짜별 일정 관리 (삭제 및 휴무)", expanded=False):
-        st.caption("🚨 주의: 삭제 버튼을 누르면 즉시 반영됩니다.")
+        st.caption("🚨 삭제 버튼을 누르면 내용이 일치하는 항목을 찾아 삭제합니다.")
         
         # 1. 날짜 선택
         del_date = st.date_input("관리할 날짜 선택", value=cur)
         del_key = del_date.strftime("%Y-%m-%d")
         
-        # 2. 최신 데이터 로드 (버튼 클릭 시점 문제 해결을 위해)
+        # 2. 최신 데이터 로드
         fresh_sch = get_data("schedule") or {}
         if "records" not in fresh_sch: fresh_sch["records"] = {}
         all_recs = normalize_data(fresh_sch["records"])
+        
+        # 해당 날짜 데이터 가져오기 (UI 표시용)
         target_list = all_recs.get(del_key, [])
         if isinstance(target_list, dict): target_list = list(target_list.values())
         elif isinstance(target_list, list): target_list = [x for x in target_list if x]
 
         st.subheader("1️⃣ 등록된 일정 (삭제)")
         
-        # [A] 직접 등록한 일정 (당직, 시간외 등) 삭제
+        # [A] 직접 등록한 일정 삭제
         manual_exists = False
         for i, rec in enumerate(target_list):
-            if rec.get('type') in ['휴무', '팀휴무', '당직휴무']: continue # 이건 아래에서 처리
+            if rec.get('type') in ['휴무', '팀휴무', '당직휴무']: continue 
             manual_exists = True
             
             with st.container(border=True):
                 cols = st.columns([4, 1])
-                icon = "📝"
-                if rec['type'] == '당직': icon = "🌙"
-                elif rec['type'] == '연차': icon = "🌴"
-                elif rec['type'] == '시간외': icon = "⏰"
+                icon = {"당직": "🌙", "연차": "🌴", "시간외": "⏰"}.get(rec['type'], "📝")
                 
                 with cols[0]:
                     st.write(f"{icon} **{rec['name']}** {rec['type']} ({rec.get('val', '')})")
                 
                 with cols[1]:
-                    # 삭제 버튼: 최신 데이터를 다시 불러와서 정확히 그 항목만 삭제
-                    if st.button("삭제", key=f"del_man_{del_key}_{i}", use_container_width=True):
-                        # 동시성 처리를 위해 다시 한번 로드
-                        latest_sch = get_data("schedule") or {}
-                        latest_recs = normalize_data(latest_sch.get("records", {}))
-                        latest_list = latest_recs.get(del_key, [])
-                        if isinstance(latest_list, dict): latest_list = list(latest_list.values())
-                        elif isinstance(latest_list, list): latest_list = [x for x in latest_list if x]
+                    # 고유 키 생성
+                    btn_key = f"del_{del_key}_{rec['name']}_{rec['type']}_{rec.get('val','')}_{i}"
+                    
+                    if st.button("삭제", key=btn_key, use_container_width=True):
+                        # 1. 가장 최신 데이터를 다시 가져옴 (동시성 문제 해결)
+                        latest_recs_raw = get_data(f"schedule/records/{del_key}") or []
                         
-                        # 해당 인덱스 삭제 (리스트가 변했을 수 있으므로 내용 매칭 권장하지만, 모바일 편의상 인덱스 사용 시 즉시 리런 필수)
-                        if i < len(latest_list):
-                            del latest_list[i]
-                            latest_recs[del_key] = latest_list
-                            latest_sch["records"] = latest_recs
-                            set_data("schedule", latest_sch)
+                        # 리스트/딕셔너리 정규화
+                        if isinstance(latest_recs_raw, dict): latest_list = list(latest_recs_raw.values())
+                        elif isinstance(latest_recs_raw, list): latest_list = [x for x in latest_recs_raw if x]
+                        else: latest_list = []
+
+                        # 2. 인덱스가 아닌 '내용'으로 찾아서 삭제
+                        found_idx = -1
+                        for idx, item in enumerate(latest_list):
+                            # 이름, 타입, 값이 모두 일치하는지 확인
+                            if (item.get('name') == rec['name'] and 
+                                item.get('type') == rec['type'] and 
+                                str(item.get('val')) == str(rec.get('val'))):
+                                found_idx = idx
+                                break
+                        
+                        if found_idx != -1:
+                            del latest_list[found_idx]
+                            # 3. 전체가 아닌 '해당 날짜'만 업데이트 (데이터 손실 방지)
+                            set_data(f"schedule/records/{del_key}", latest_list)
                             st.success("삭제 완료!")
                             st.rerun()
                         else:
@@ -454,60 +477,59 @@ with tab_cal:
         st.divider()
         st.subheader("2️⃣ 자동 생성 근무자 (제외 처리)")
         
-        # [B] 자동 생성된 근무자 -> '제외' 버튼 누르면 '휴무' 기록 추가
+        # [B] 자동 생성 근무자 제외 로직
         auto_members = get_auto_duty_members(del_date, fresh_sch)
         
         if not auto_members:
-            st.caption("이 날은 근무자가 없습니다 (휴무일 등).")
+            st.caption("이 날은 근무자가 없습니다.")
         else:
             for mem in auto_members:
                 with st.container(border=True):
                     c1, c2 = st.columns([4, 1])
-                    with c1:
-                        st.write(f"👷 **{mem}** (자동 배정)")
+                    with c1: st.write(f"👷 **{mem}** (자동 배정)")
                     with c2:
                         if st.button("제외", key=f"excl_{del_key}_{mem}", use_container_width=True):
-                            # 휴무 기록 추가
-                            latest_sch = get_data("schedule") or {}
-                            if "records" not in latest_sch: latest_sch["records"] = {}
-                            latest_recs = normalize_data(latest_sch["records"])
+                            # 최신 데이터 로드
+                            latest_recs_raw = get_data(f"schedule/records/{del_key}") or []
+                            if isinstance(latest_recs_raw, dict): latest_list = list(latest_recs_raw.values())
+                            elif isinstance(latest_recs_raw, list): latest_list = [x for x in latest_recs_raw if x]
+                            else: latest_list = []
                             
-                            day_list = latest_recs.get(del_key, [])
-                            if isinstance(day_list, dict): day_list = list(day_list.values())
-                            elif isinstance(day_list, list): day_list = [x for x in day_list if x]
+                            # 휴무 데이터 추가
+                            latest_list.append({"type": "휴무", "name": mem, "val": "모바일제외"})
                             
-                            day_list.append({"type": "휴무", "name": mem, "val": "모바일제외"})
-                            latest_recs[del_key] = day_list
-                            latest_sch["records"] = latest_recs
-                            set_data("schedule", latest_sch)
-                            st.success(f"{mem}님을 명단에서 제외했습니다.")
+                            # 해당 날짜만 업데이트
+                            set_data(f"schedule/records/{del_key}", latest_list)
+                            st.success(f"{mem}님 제외 완료.")
                             st.rerun()
                             
-        # [C] 이미 제외된(휴무) 사람 복구 기능
-        excluded_list = [r for i, r in enumerate(target_list) if r.get('type') == '휴무']
+        # [C] 제외된 사람 복구 기능
+        excluded_list = [r for r in target_list if r.get('type') == '휴무']
         if excluded_list:
             st.divider()
-            st.caption("🚫 현재 제외된 근무자 (다시 근무시키려면 삭제하세요)")
-            for i, rec in enumerate(target_list):
-                if rec.get('type') != '휴무': continue
-                
+            st.caption("🚫 현재 제외된 근무자")
+            for i, rec in enumerate(excluded_list):
                 with st.container(border=True):
                     c1, c2 = st.columns([4, 1])
                     with c1: st.write(f"❌ **{rec['name']}** (제외됨)")
                     with c2:
                         if st.button("복구", key=f"rest_{del_key}_{i}", use_container_width=True):
-                             # 위 삭제 로직과 동일 (휴무 기록을 삭제하면 다시 자동 생성 명단에 뜸)
-                            latest_sch = get_data("schedule") or {}
-                            latest_recs = normalize_data(latest_sch.get("records", {}))
-                            latest_list = latest_recs.get(del_key, [])
-                            if isinstance(latest_list, dict): latest_list = list(latest_list.values())
-                            elif isinstance(latest_list, list): latest_list = [x for x in latest_list if x]
+                            # 최신 데이터 로드
+                            latest_recs_raw = get_data(f"schedule/records/{del_key}") or []
+                            if isinstance(latest_recs_raw, dict): latest_list = list(latest_recs_raw.values())
+                            elif isinstance(latest_recs_raw, list): latest_list = [x for x in latest_recs_raw if x]
+                            else: latest_list = []
                             
-                            if i < len(latest_list):
-                                del latest_list[i]
-                                latest_recs[del_key] = latest_list
-                                latest_sch["records"] = latest_recs
-                                set_data("schedule", latest_sch)
+                            # '휴무'이면서 '이름'이 같은 항목 삭제
+                            found_idx = -1
+                            for idx, item in enumerate(latest_list):
+                                if item.get('type') == '휴무' and item.get('name') == rec['name']:
+                                    found_idx = idx
+                                    break
+                            
+                            if found_idx != -1:
+                                del latest_list[found_idx]
+                                set_data(f"schedule/records/{del_key}", latest_list)
                                 st.success("복구 완료!")
                                 st.rerun()
 
@@ -554,19 +576,24 @@ with tab_my:
             
             if st.form_submit_button("저장하기", type="primary", use_container_width=True):
                 d_key = in_date.strftime("%Y-%m-%d")
-                fresh_sch = get_data("schedule") or {}
-                if "records" not in fresh_sch: fresh_sch["records"] = {}
-                records = normalize_data(fresh_sch["records"])
-                day_list = records.get(d_key, [])
-                if isinstance(day_list, dict): day_list = list(day_list.values())
-                elif isinstance(day_list, list): day_list = [x for x in day_list if x]
+                
+                # 해당 날짜의 데이터만 가져옴
+                day_data_raw = get_data(f"schedule/records/{d_key}") or []
+                
+                # 리스트로 변환
+                if isinstance(day_data_raw, dict): day_list = list(day_data_raw.values())
+                elif isinstance(day_data_raw, list): day_list = [x for x in day_data_raw if x]
+                else: day_list = []
                 
                 save_val = in_val
                 if in_type == "당직" and not in_val: save_val = "22:00~"
+                
+                # 데이터 추가
                 day_list.append({"name": sel_name, "type": in_type, "val": save_val})
-                records[d_key] = day_list
-                fresh_sch["records"] = records
-                set_data("schedule", fresh_sch)
+                
+                # 해당 날짜 경로에만 set
+                set_data(f"schedule/records/{d_key}", day_list)
+                
                 st.success("저장되었습니다.")
                 st.rerun()
 
@@ -594,22 +621,30 @@ with tab_my:
                 with col_btn:
                     unique_key = f"del_{log['date']}_{log['type']}_{log['val']}_{i}"
                     if st.button("삭제", key=unique_key, use_container_width=True):
-                        fresh_sch = get_data("schedule") or {}
-                        fresh_recs = normalize_data(fresh_sch.get("records", {}))
-                        target_day_list = fresh_recs.get(log['date'], [])
-                        if isinstance(target_day_list, dict): target_day_list = list(target_day_list.values())
-                        elif isinstance(target_day_list, list): target_day_list = [x for x in target_day_list if x]
+                        # 최신 데이터 로드
+                        latest_recs_raw = get_data(f"schedule/records/{log['date']}") or []
                         
-                        new_day_list = []
-                        deleted = False
-                        for item in target_day_list:
-                            if (not deleted and item.get('name') == sel_name and item.get('type') == log['type'] and str(item.get('val')) == str(log['val'])):
-                                deleted = True; continue
-                            new_day_list.append(item)
-                        fresh_recs[log['date']] = new_day_list
-                        fresh_sch["records"] = fresh_recs
-                        set_data("schedule", fresh_sch)
-                        st.success("삭제되었습니다."); st.rerun()
+                        if isinstance(latest_recs_raw, dict): latest_list = list(latest_recs_raw.values())
+                        elif isinstance(latest_recs_raw, list): latest_list = [x for x in latest_recs_raw if x]
+                        else: latest_list = []
+                        
+                        # 내용이 일치하는 항목을 찾아 삭제
+                        found_idx = -1
+                        for idx, item in enumerate(latest_list):
+                            if (item.get('name') == sel_name and 
+                                item.get('type') == log['type'] and 
+                                str(item.get('val')) == str(log['val'])):
+                                found_idx = idx
+                                break
+                        
+                        if found_idx != -1:
+                            del latest_list[found_idx]
+                            set_data(f"schedule/records/{log['date']}", latest_list)
+                            st.success("삭제되었습니다.")
+                            st.rerun()
+                        else:
+                            st.warning("이미 삭제된 항목입니다.")
+                            st.rerun()
 
 # 3. 연박자 보기 탭
 with tab_stay:
@@ -668,9 +703,15 @@ with tab_lost:
         l_nm = c2.text_input("물건명")
         if st.button("등록", use_container_width=True):
             if l_loc and l_nm:
+                # 최신 데이터 다시 로드
+                latest_raw = get_data("lost_found")
+                latest_items = []
+                if isinstance(latest_raw, dict): latest_items = list(latest_raw.values())
+                elif isinstance(latest_raw, list): latest_items = [x for x in latest_raw if x]
+                
                 new_l = {"date": datetime.now().strftime("%Y-%m-%d"), "item": l_nm, "location": l_loc, "status": "보관중", "return_date": "-"}
-                lost_items.append(new_l)
-                set_data("lost_found", lost_items)
+                latest_items.append(new_l)
+                set_data("lost_found", latest_items)
                 st.rerun()
 
     cnt = len([x for x in lost_items if x.get('status')=='보관중'])
@@ -686,18 +727,47 @@ with tab_lost:
             with c_btn:
                 if is_kept:
                     if st.button("수령", key=f"rec_{i}"):
-                        lost_items[i]['status'] = "수령완료"
-                        lost_items[i]['return_date'] = datetime.now().strftime("%Y-%m-%d")
-                        set_data("lost_found", lost_items)
-                        st.rerun()
+                        # 최신 데이터 로드
+                        latest_raw = get_data("lost_found")
+                        latest_items = []
+                        if isinstance(latest_raw, dict): latest_items = list(latest_raw.values())
+                        elif isinstance(latest_raw, list): latest_items = [x for x in latest_raw if x]
+                        
+                        # 내용 매칭하여 상태 변경
+                        found_idx = -1
+                        for idx, li in enumerate(latest_items):
+                             if (li.get('item') == item['item'] and 
+                                 li.get('date') == item['date'] and 
+                                 li.get('location') == item['location']):
+                                 found_idx = idx
+                                 break
+                        
+                        if found_idx != -1:
+                            latest_items[found_idx]['status'] = "수령완료"
+                            latest_items[found_idx]['return_date'] = datetime.now().strftime("%Y-%m-%d")
+                            set_data("lost_found", latest_items)
+                            st.rerun()
                 else:
                     if st.button("삭제", key=f"del_{i}"):
-                        del lost_items[i]
-                        set_data("lost_found", lost_items)
-                        st.rerun()
-
-
-
+                        # 최신 데이터 로드
+                        latest_raw = get_data("lost_found")
+                        latest_items = []
+                        if isinstance(latest_raw, dict): latest_items = list(latest_raw.values())
+                        elif isinstance(latest_raw, list): latest_items = [x for x in latest_raw if x]
+                        
+                        # 내용 매칭하여 삭제
+                        found_idx = -1
+                        for idx, li in enumerate(latest_items):
+                             if (li.get('item') == item['item'] and 
+                                 li.get('date') == item['date'] and 
+                                 li.get('location') == item['location']):
+                                 found_idx = idx
+                                 break
+                        
+                        if found_idx != -1:
+                            del latest_items[found_idx]
+                            set_data("lost_found", latest_items)
+                            st.rerun()
 
 
 
