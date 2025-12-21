@@ -8,8 +8,6 @@ import json
 import re
 
 # --- 기본 설정 ---
-# Assuming 'service.json' is in the same directory. 
-# Best practice for Streamlit Cloud is to use st.secrets.
 CRED_FILENAME = "service.json" 
 FIREBASE_DB_URL = 'https://ydcpmanager-default-rtdb.firebaseio.com/'
 
@@ -17,7 +15,7 @@ st.set_page_config(
     page_title="율동공원 모바일", 
     page_icon="⛺", 
     layout="wide",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="expanded"  # 사이드바 보이게 설정
 )
 
 # ==========================================
@@ -30,7 +28,6 @@ def check_password():
     if "PASSWORD" in st.secrets:
         system_pass = st.secrets["PASSWORD"]
     else:
-        # Fallback password if secrets are not set
         system_pass = "0616"
     
     if st.session_state.password_input == system_pass:
@@ -153,17 +150,14 @@ CRED_PATH = os.path.join(CURRENT_DIR, CRED_FILENAME)
 
 @st.cache_resource
 def init_firebase():
-    # If app is already initialized, return True
     if firebase_admin._apps: return True
     
-    # Try initializing from Streamlit secrets (Cloud deployment)
     if "firebase_key" in st.secrets:
         try:
             val = st.secrets["firebase_key"]
             if isinstance(val, str): cred_info = json.loads(val)
             else: cred_info = dict(val)
             
-            # Handle private key formatting issues
             if "private_key" in cred_info: 
                 cred_info["private_key"] = cred_info["private_key"].replace("\\n", "\n")
             
@@ -172,7 +166,6 @@ def init_firebase():
             return True
         except Exception as e: st.error(f"Cloud 인증 오류: {e}"); return False
     
-    # Try initializing from local file
     if os.path.exists(CRED_PATH):
         try:
             cred = credentials.Certificate(CRED_PATH)
@@ -192,9 +185,32 @@ def normalize_data(data):
     if isinstance(data, list): return {str(i): v for i, v in enumerate(data) if v is not None}
     return data if data else {}
 
-# --- [NEW] 자동 근무자 계산 함수 ---
+# --- [NEW] 사이드바 설정 (로드/저장 설명) ---
+with st.sidebar:
+    st.header("☁️ DB 동기화")
+    
+    # [Load 버튼]
+    if st.button("🔄 최신 데이터 불러오기 (Load)", use_container_width=True):
+        st.cache_resource.clear()
+        st.toast("☁️ 클라우드에서 최신 데이터를 불러왔습니다.")
+        st.rerun()
+    
+    st.info("""
+    **[저장(Save) 안내]**
+    
+    모바일 앱은 데이터 안전을 위해
+    **등록/삭제/수정 버튼 클릭 시**
+    **즉시 클라우드에 저장**됩니다.
+    
+    별도의 '전체 저장' 버튼은 없습니다.
+    """)
+    
+    if st.button("로그아웃", use_container_width=True):
+        st.session_state.logged_in = False
+        st.rerun()
+
+# --- 자동 근무자 계산 함수 ---
 def get_auto_duty_members(curr_date, sch_data):
-    """특정 날짜의 자동 생성 근무자(A/B조) 명단을 계산하여 반환"""
     records = normalize_data(sch_data.get("records", {}))
     teams = normalize_data(sch_data.get("teams", {}))
     month_rules = normalize_data(sch_data.get("month_rules", {}))
@@ -209,15 +225,14 @@ def get_auto_duty_members(curr_date, sch_data):
     month_key = f"{year}-{month:02d}"
     
     rules = month_rules.get(month_key, {})
+    # 기본값 설정
     start_team = rules.get("start_team", "1")
     off1 = rules.get("t1_off", [4, 5]) 
     off2 = rules.get("t2_off", [6, 0]) 
 
-    # 휴무자 제외 로직
     prev_str = (curr_date - timedelta(days=1)).strftime("%Y-%m-%d")
     rest_members = []
     
-    # 1. 어제 당직자
     if prev_str in records:
         prev_recs = records[prev_str]
         if isinstance(prev_recs, dict): prev_recs = list(prev_recs.values())
@@ -226,7 +241,6 @@ def get_auto_duty_members(curr_date, sch_data):
             if isinstance(r, dict) and r.get('type') == '당직': 
                 rest_members.append(r.get('name'))
     
-    # 2. 오늘 휴무 기록자
     if date_str in records:
         today_recs = records[date_str]
         if isinstance(today_recs, dict): today_recs = list(today_recs.values())
@@ -238,11 +252,9 @@ def get_auto_duty_members(curr_date, sch_data):
     t1_today = [m for m in t1_list if m not in rest_members]
     t2_today = [m for m in t2_list if m not in rest_members]
 
-    # 근무조 계산
     cal = calendar.Calendar(firstweekday=0)
     month_days = cal.monthdayscalendar(year, month)
     
-    # 몇 번째 주인지 찾기
     week_idx = 0
     for idx, week in enumerate(month_days):
         if day in week:
@@ -257,13 +269,12 @@ def get_auto_duty_members(curr_date, sch_data):
     
     if not is_t1_off and not is_t2_off:
         is_even_week = (week_idx % 2 == 0)
-        # 로테이션에 따라 A/B조 모두 근무
         duty_list.extend(t1_today)
         duty_list.extend(t2_today)
     elif is_t1_off and not is_t2_off:
-        duty_list.extend(t2_today) # 2조만 근무
+        duty_list.extend(t2_today)
     elif is_t2_off and not is_t1_off:
-        duty_list.extend(t1_today) # 1조만 근무
+        duty_list.extend(t1_today)
         
     return duty_list
 
@@ -301,7 +312,6 @@ def draw_calendar(year, month, sch_data, my_filter=None):
             curr_date = datetime(year, month, day)
             date_str = f"{year}-{month:02d}-{day:02d}"
             
-            # --- 휴무자 제외 로직 ---
             prev_str = (curr_date - timedelta(days=1)).strftime("%Y-%m-%d")
             rest_members = []
             
@@ -325,7 +335,6 @@ def draw_calendar(year, month, sch_data, my_filter=None):
             t2_today = [m for m in t2_list if m not in rest_members]
             t1_str, t2_str = ", ".join(t1_today), ", ".join(t2_today)
             
-            # --- 근무 박스 ---
             work_html = ""
             weekday = curr_date.weekday() 
             is_t1_off, is_t2_off = (weekday in off1), (weekday in off2)
@@ -343,7 +352,6 @@ def draw_calendar(year, month, sch_data, my_filter=None):
             else:
                 work_html += '<div class="work-box wb-rest">휴무</div>'
 
-            # --- 개인 일정 뱃지 ---
             indiv_html = ""
             if date_str in records:
                 day_recs = records[date_str]
@@ -370,9 +378,6 @@ def draw_calendar(year, month, sch_data, my_filter=None):
 
 # --- 메인 탭 구성 ---
 st.title("🏕️ 율동공원 관리 시스템")
-if st.sidebar.button("로그아웃"):
-    st.session_state.logged_in = False
-    st.rerun()
 
 # 탭 5개
 tab_cal, tab_my, tab_stay, tab_mon, tab_lost = st.tabs(["📅 근무", "✍️ 수정", "⛺ 연박", "📊 현황", "🧢 분실"])
@@ -402,30 +407,23 @@ with tab_cal:
     my_filter = st.selectbox("직원별 보기", members, label_visibility="collapsed")
     draw_calendar(cur.year, cur.month, sch_data, my_filter)
 
-    # -------------------------------------------------------------
-    # [수정된 코드] 날짜별 일정 관리 (안전한 삭제 로직 적용)
-    # -------------------------------------------------------------
     st.divider()
     with st.expander("🛠️ 날짜별 일정 관리 (삭제 및 휴무)", expanded=False):
-        st.caption("🚨 삭제 버튼을 누르면 내용이 일치하는 항목을 찾아 삭제합니다.")
+        st.caption("🚨 삭제 버튼을 누르면 내용이 일치하는 항목을 찾아 삭제하고 **즉시 저장(Save)**합니다.")
         
-        # 1. 날짜 선택
         del_date = st.date_input("관리할 날짜 선택", value=cur)
         del_key = del_date.strftime("%Y-%m-%d")
         
-        # 2. 최신 데이터 로드
         fresh_sch = get_data("schedule") or {}
         if "records" not in fresh_sch: fresh_sch["records"] = {}
         all_recs = normalize_data(fresh_sch["records"])
         
-        # 해당 날짜 데이터 가져오기 (UI 표시용)
         target_list = all_recs.get(del_key, [])
         if isinstance(target_list, dict): target_list = list(target_list.values())
         elif isinstance(target_list, list): target_list = [x for x in target_list if x]
 
         st.subheader("1️⃣ 등록된 일정 (삭제)")
         
-        # [A] 직접 등록한 일정 삭제
         manual_exists = False
         for i, rec in enumerate(target_list):
             if rec.get('type') in ['휴무', '팀휴무', '당직휴무']: continue 
@@ -439,22 +437,17 @@ with tab_cal:
                     st.write(f"{icon} **{rec['name']}** {rec['type']} ({rec.get('val', '')})")
                 
                 with cols[1]:
-                    # 고유 키 생성
                     btn_key = f"del_{del_key}_{rec['name']}_{rec['type']}_{rec.get('val','')}_{i}"
                     
                     if st.button("삭제", key=btn_key, use_container_width=True):
-                        # 1. 가장 최신 데이터를 다시 가져옴 (동시성 문제 해결)
                         latest_recs_raw = get_data(f"schedule/records/{del_key}") or []
                         
-                        # 리스트/딕셔너리 정규화
                         if isinstance(latest_recs_raw, dict): latest_list = list(latest_recs_raw.values())
                         elif isinstance(latest_recs_raw, list): latest_list = [x for x in latest_recs_raw if x]
                         else: latest_list = []
 
-                        # 2. 인덱스가 아닌 '내용'으로 찾아서 삭제
                         found_idx = -1
                         for idx, item in enumerate(latest_list):
-                            # 이름, 타입, 값이 모두 일치하는지 확인
                             if (item.get('name') == rec['name'] and 
                                 item.get('type') == rec['type'] and 
                                 str(item.get('val')) == str(rec.get('val'))):
@@ -463,9 +456,8 @@ with tab_cal:
                         
                         if found_idx != -1:
                             del latest_list[found_idx]
-                            # 3. 전체가 아닌 '해당 날짜'만 업데이트 (데이터 손실 방지)
                             set_data(f"schedule/records/{del_key}", latest_list)
-                            st.success("삭제 완료!")
+                            st.toast("삭제 후 저장되었습니다.")
                             st.rerun()
                         else:
                             st.error("이미 삭제되었거나 데이터가 변경되었습니다.")
@@ -477,7 +469,6 @@ with tab_cal:
         st.divider()
         st.subheader("2️⃣ 자동 생성 근무자 (제외 처리)")
         
-        # [B] 자동 생성 근무자 제외 로직
         auto_members = get_auto_duty_members(del_date, fresh_sch)
         
         if not auto_members:
@@ -489,21 +480,17 @@ with tab_cal:
                     with c1: st.write(f"👷 **{mem}** (자동 배정)")
                     with c2:
                         if st.button("제외", key=f"excl_{del_key}_{mem}", use_container_width=True):
-                            # 최신 데이터 로드
                             latest_recs_raw = get_data(f"schedule/records/{del_key}") or []
                             if isinstance(latest_recs_raw, dict): latest_list = list(latest_recs_raw.values())
                             elif isinstance(latest_recs_raw, list): latest_list = [x for x in latest_recs_raw if x]
                             else: latest_list = []
                             
-                            # 휴무 데이터 추가
                             latest_list.append({"type": "휴무", "name": mem, "val": "모바일제외"})
                             
-                            # 해당 날짜만 업데이트
                             set_data(f"schedule/records/{del_key}", latest_list)
-                            st.success(f"{mem}님 제외 완료.")
+                            st.toast(f"{mem}님 제외 설정 저장됨.")
                             st.rerun()
                             
-        # [C] 제외된 사람 복구 기능
         excluded_list = [r for r in target_list if r.get('type') == '휴무']
         if excluded_list:
             st.divider()
@@ -514,13 +501,11 @@ with tab_cal:
                     with c1: st.write(f"❌ **{rec['name']}** (제외됨)")
                     with c2:
                         if st.button("복구", key=f"rest_{del_key}_{i}", use_container_width=True):
-                            # 최신 데이터 로드
                             latest_recs_raw = get_data(f"schedule/records/{del_key}") or []
                             if isinstance(latest_recs_raw, dict): latest_list = list(latest_recs_raw.values())
                             elif isinstance(latest_recs_raw, list): latest_list = [x for x in latest_recs_raw if x]
                             else: latest_list = []
                             
-                            # '휴무'이면서 '이름'이 같은 항목 삭제
                             found_idx = -1
                             for idx, item in enumerate(latest_list):
                                 if item.get('type') == '휴무' and item.get('name') == rec['name']:
@@ -530,7 +515,7 @@ with tab_cal:
                             if found_idx != -1:
                                 del latest_list[found_idx]
                                 set_data(f"schedule/records/{del_key}", latest_list)
-                                st.success("복구 완료!")
+                                st.toast("복구되어 저장되었습니다.")
                                 st.rerun()
 
 # 2. 내 수정 탭
@@ -539,7 +524,6 @@ with tab_my:
     sel_name = st.selectbox("직원 선택", [m for m in members if m != "전체 보기"])
     
     if sel_name:
-        # 월별 통계
         cur_y, cur_m = cur.year, cur.month
         month_prefix = f"{cur_y}-{cur_m:02d}"
         sch_data = get_data("schedule") or {}
@@ -567,7 +551,7 @@ with tab_my:
         c3.markdown(f"<div style='background:#FFEBEE;padding:10px;border-radius:5px;text-align:center;border:1px solid #FFCDD2'><div style='font-size:0.8rem;color:#C62828'>🌙 당직</div><div style='font-size:1.2rem;font-weight:bold;color:#B71C1C'>{cnt_night}회</div></div>", unsafe_allow_html=True)
         
         st.divider()
-        st.write("📝 **새로운 기록 추가**")
+        st.write("📝 **새로운 기록 추가** (저장 시 클라우드 반영)")
         with st.form("new_schedule"):
             c_d, c_t = st.columns(2)
             in_date = c_d.date_input("날짜", value=datetime.now())
@@ -576,11 +560,8 @@ with tab_my:
             
             if st.form_submit_button("저장하기", type="primary", use_container_width=True):
                 d_key = in_date.strftime("%Y-%m-%d")
-                
-                # 해당 날짜의 데이터만 가져옴
                 day_data_raw = get_data(f"schedule/records/{d_key}") or []
                 
-                # 리스트로 변환
                 if isinstance(day_data_raw, dict): day_list = list(day_data_raw.values())
                 elif isinstance(day_data_raw, list): day_list = [x for x in day_data_raw if x]
                 else: day_list = []
@@ -588,13 +569,10 @@ with tab_my:
                 save_val = in_val
                 if in_type == "당직" and not in_val: save_val = "22:00~"
                 
-                # 데이터 추가
                 day_list.append({"name": sel_name, "type": in_type, "val": save_val})
-                
-                # 해당 날짜 경로에만 set
                 set_data(f"schedule/records/{d_key}", day_list)
                 
-                st.success("저장되었습니다.")
+                st.toast("클라우드에 저장되었습니다.")
                 st.rerun()
 
         st.divider()
@@ -621,14 +599,12 @@ with tab_my:
                 with col_btn:
                     unique_key = f"del_{log['date']}_{log['type']}_{log['val']}_{i}"
                     if st.button("삭제", key=unique_key, use_container_width=True):
-                        # 최신 데이터 로드
                         latest_recs_raw = get_data(f"schedule/records/{log['date']}") or []
                         
                         if isinstance(latest_recs_raw, dict): latest_list = list(latest_recs_raw.values())
                         elif isinstance(latest_recs_raw, list): latest_list = [x for x in latest_recs_raw if x]
                         else: latest_list = []
                         
-                        # 내용이 일치하는 항목을 찾아 삭제
                         found_idx = -1
                         for idx, item in enumerate(latest_list):
                             if (item.get('name') == sel_name and 
@@ -640,7 +616,7 @@ with tab_my:
                         if found_idx != -1:
                             del latest_list[found_idx]
                             set_data(f"schedule/records/{log['date']}", latest_list)
-                            st.success("삭제되었습니다.")
+                            st.toast("삭제 후 클라우드 저장 완료.")
                             st.rerun()
                         else:
                             st.warning("이미 삭제된 항목입니다.")
@@ -697,13 +673,12 @@ with tab_lost:
     if isinstance(raw_lost, dict): lost_items = list(raw_lost.values())
     elif isinstance(raw_lost, list): lost_items = [x for x in raw_lost if x]
     
-    with st.expander("➕ 분실물 등록", expanded=False):
+    with st.expander("➕ 분실물 등록 (즉시 저장)", expanded=False):
         c1, c2 = st.columns(2)
         l_loc = c1.text_input("장소")
         l_nm = c2.text_input("물건명")
         if st.button("등록", use_container_width=True):
             if l_loc and l_nm:
-                # 최신 데이터 다시 로드
                 latest_raw = get_data("lost_found")
                 latest_items = []
                 if isinstance(latest_raw, dict): latest_items = list(latest_raw.values())
@@ -712,6 +687,7 @@ with tab_lost:
                 new_l = {"date": datetime.now().strftime("%Y-%m-%d"), "item": l_nm, "location": l_loc, "status": "보관중", "return_date": "-"}
                 latest_items.append(new_l)
                 set_data("lost_found", latest_items)
+                st.toast("클라우드 저장 완료")
                 st.rerun()
 
     cnt = len([x for x in lost_items if x.get('status')=='보관중'])
@@ -727,13 +703,11 @@ with tab_lost:
             with c_btn:
                 if is_kept:
                     if st.button("수령", key=f"rec_{i}"):
-                        # 최신 데이터 로드
                         latest_raw = get_data("lost_found")
                         latest_items = []
                         if isinstance(latest_raw, dict): latest_items = list(latest_raw.values())
                         elif isinstance(latest_raw, list): latest_items = [x for x in latest_raw if x]
                         
-                        # 내용 매칭하여 상태 변경
                         found_idx = -1
                         for idx, li in enumerate(latest_items):
                              if (li.get('item') == item['item'] and 
@@ -746,16 +720,15 @@ with tab_lost:
                             latest_items[found_idx]['status'] = "수령완료"
                             latest_items[found_idx]['return_date'] = datetime.now().strftime("%Y-%m-%d")
                             set_data("lost_found", latest_items)
+                            st.toast("수령 처리 저장됨")
                             st.rerun()
                 else:
                     if st.button("삭제", key=f"del_{i}"):
-                        # 최신 데이터 로드
                         latest_raw = get_data("lost_found")
                         latest_items = []
                         if isinstance(latest_raw, dict): latest_items = list(latest_raw.values())
                         elif isinstance(latest_raw, list): latest_items = [x for x in latest_raw if x]
                         
-                        # 내용 매칭하여 삭제
                         found_idx = -1
                         for idx, li in enumerate(latest_items):
                              if (li.get('item') == item['item'] and 
@@ -767,9 +740,7 @@ with tab_lost:
                         if found_idx != -1:
                             del latest_items[found_idx]
                             set_data("lost_found", latest_items)
+                            st.toast("삭제 저장됨")
                             st.rerun()
-
-
-
 
 
