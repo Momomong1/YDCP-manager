@@ -385,9 +385,28 @@ tab_cal, tab_my, tab_stay, tab_mon, tab_lost = st.tabs(["📅 근무", "✍️ �
 # 1. 근무표 탭
 with tab_cal:
     if 'curr_date' not in st.session_state: st.session_state.curr_date = datetime.now()
+    
+    # -------------------------------------------------------------
+    # [수정된 부분] 정확한 월 이동 로직
+    # -------------------------------------------------------------
     def change_month(amount):
-        st.session_state.curr_date += timedelta(days=32 * amount)
-        st.session_state.curr_date = st.session_state.curr_date.replace(day=1)
+        curr = st.session_state.curr_date
+        
+        # 현재 월 + 이동할 값
+        new_year = curr.year
+        new_month = curr.month + amount
+        
+        # 연도/월 보정 (12월 초과 또는 1월 미만 처리)
+        if new_month > 12:
+            new_month = 1
+            new_year += 1
+        elif new_month < 1:
+            new_month = 12
+            new_year -= 1
+            
+        # 해당 월의 1일로 설정
+        st.session_state.curr_date = curr.replace(year=new_year, month=new_month, day=1)
+    # -------------------------------------------------------------
     
     c1, c2, c3 = st.columns([1, 2, 1])
     with c1: st.button("◀", on_click=change_month, args=(-1,), use_container_width=True)
@@ -742,5 +761,3 @@ with tab_lost:
                             set_data("lost_found", latest_items)
                             st.toast("삭제 저장됨")
                             st.rerun()
-
-
