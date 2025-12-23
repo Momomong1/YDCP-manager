@@ -278,7 +278,7 @@ def get_auto_duty_members(curr_date, sch_data):
         
     return duty_list
 
-# --- 달력 그리기 ---
+# --- [수정] 달력 그리기 (9-18 규칙 적용) ---
 def draw_calendar(year, month, sch_data, my_filter=None):
     records = normalize_data(sch_data.get("records", {}))
     teams = normalize_data(sch_data.get("teams", {}))
@@ -291,7 +291,9 @@ def draw_calendar(year, month, sch_data, my_filter=None):
 
     month_key = f"{year}-{month:02d}"
     rules = month_rules.get(month_key, {})
+    
     start_team = rules.get("start_team", "1")
+    time_type = rules.get("time_type", "split") # [NEW] 시간 타입 가져오기
     off1 = rules.get("t1_off", [4, 5]) 
     off2 = rules.get("t2_off", [6, 0]) 
     
@@ -339,12 +341,27 @@ def draw_calendar(year, month, sch_data, my_filter=None):
             weekday = curr_date.weekday() 
             is_t1_off, is_t2_off = (weekday in off1), (weekday in off2)
             
+            # --- [수정] 근무자 표시 로직 ---
             if not is_t1_off and not is_t2_off:
+                # 두 팀 모두 근무하는 평일
                 is_even_week = (r_idx % 2 == 0)
-                if start_team == "1": duty_a, duty_b = (t1_str, t2_str) if is_even_week else (t2_str, t1_str)
-                else: duty_a, duty_b = (t2_str, t1_str) if is_even_week else (t1_str, t2_str)
-                if duty_a: work_html += f'<div class="work-box wb-a">A {duty_a}</div>'
-                if duty_b: work_html += f'<div class="work-box wb-b">B {duty_b}</div>'
+                
+                # 순서 정하기 (A위치 / B위치)
+                if start_team == "1": 
+                    duty_a_str, duty_b_str = (t1_str, t2_str) if is_even_week else (t2_str, t1_str)
+                else: 
+                    duty_a_str, duty_b_str = (t2_str, t1_str) if is_even_week else (t1_str, t2_str)
+                
+                # 시간 타입에 따라 표시 텍스트 변경
+                if time_type == "unified":
+                    # 통합 근무 (9-18)
+                    if duty_a_str: work_html += f'<div class="work-box wb-a">09-18 {duty_a_str}</div>'
+                    if duty_b_str: work_html += f'<div class="work-box wb-b">09-18 {duty_b_str}</div>'
+                else:
+                    # 기본 분리 근무 (A 08-17, B 11-20)
+                    if duty_a_str: work_html += f'<div class="work-box wb-a">A {duty_a_str}</div>'
+                    if duty_b_str: work_html += f'<div class="work-box wb-b">B {duty_b_str}</div>'
+
             elif is_t1_off and not is_t2_off:
                 if t2_str: work_html += f'<div class="work-box wb-b"> {t2_str}</div>'
             elif is_t2_off and not is_t1_off:
