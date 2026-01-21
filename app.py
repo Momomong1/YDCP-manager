@@ -278,8 +278,7 @@ def get_auto_duty_members(curr_date, sch_data):
         
     return duty_list
 
-# --- [수정] 달력 그리기 ---
-# --- [수정] 달력 그리기 ---
+# --- [수정 완료] 달력 그리기 ---
 def draw_calendar(year, month, sch_data, my_filter=None):
     records = normalize_data(sch_data.get("records", {}))
     teams = normalize_data(sch_data.get("teams", {}))
@@ -297,6 +296,7 @@ def draw_calendar(year, month, sch_data, my_filter=None):
     time_type = rules.get("time_type", "split")
     rotation_type = rules.get("rotation_type", "fixed")
     
+    # 기본 휴무일
     base_off1 = rules.get("t1_off", [])
     base_off2 = rules.get("t2_off", [])
     
@@ -312,6 +312,7 @@ def draw_calendar(year, month, sch_data, my_filter=None):
     month_days = cal.monthdayscalendar(year, month)
     
     for r_idx, week in enumerate(month_days):
+        # 격주 로직 적용
         if rotation_type == "biweekly" and (r_idx % 2 != 0):
             curr_off1, curr_off2 = base_off2, base_off1
         else:
@@ -335,12 +336,12 @@ def draw_calendar(year, month, sch_data, my_filter=None):
                     if isinstance(r, dict) and r.get('type') == '당직': 
                         rest_members.append(r.get('name'))
             
-            # [오류 수정 부분] 오늘자 기록 로드
+            # [오류 수정됨] 오늘자 기록 로드 (raw 데이터를 먼저 받고 리스트 변환)
             today_recs_raw = records.get(date_str, [])
             if isinstance(today_recs_raw, dict): 
                 today_recs = list(today_recs.values())
             elif isinstance(today_recs_raw, list): 
-                today_recs = [x for x in today_recs_raw if x] # 여기가 수정됨 (_raw 추가)
+                today_recs = [x for x in today_recs_raw if x]
             else: 
                 today_recs = []
 
@@ -354,6 +355,7 @@ def draw_calendar(year, month, sch_data, my_filter=None):
                 elif r.get('type') == '특별근무':
                     special_names.add(r.get('name'))
 
+            # 근무자 명단 확정
             is_t1_rule_work = (c_idx not in curr_off1)
             is_t2_rule_work = (c_idx not in curr_off2)
 
@@ -369,6 +371,7 @@ def draw_calendar(year, month, sch_data, my_filter=None):
 
             t1_str, t2_str = ", ".join(t1_today), ", ".join(t2_today)
             
+            # 근무 박스 HTML 생성
             work_html = ""
             weekday = curr_date.weekday() 
             is_t1_off, is_t2_off = (weekday in curr_off1), (weekday in curr_off2)
@@ -402,9 +405,9 @@ def draw_calendar(year, month, sch_data, my_filter=None):
                 if e_type in ["당직휴무", "휴무", "팀휴무"]: continue 
 
                 bg_c, fg_c = "#eee", "black"
-                display_txt = f"{r_name} {r_type}"
+                display_txt = f"{e_name} {e_type}"
 
-                # 특별근무: 뱃지 표시는 하되, 글자는 이름만 표시
+                # 특별근무: 뱃지 보이게 하되 이름만 표시
                 if e_type == "특별근무": 
                     bg_c, fg_c = "#495057", "white" 
                     display_txt = f"{e_name}"
@@ -413,13 +416,17 @@ def draw_calendar(year, month, sch_data, my_filter=None):
                     display_txt = f"{e_name} 당직"
                 elif e_type == "연차": 
                     bg_c, fg_c = "#2E7D32", "white"
-                    display_txt = f"{e_name} 연차"
+                    # 숫자만 있으면 h 붙임
+                    if str(e_val).replace('.','').isdigit():
+                        display_txt = f"{e_name} 연차 {e_val}h"
+                    else:
+                        display_txt = f"{e_name} 연차 {e_val}" if e_val else f"{e_name} 연차"
                 elif e_type == "시간외": 
                     bg_c, fg_c = "#1A237E", "white"
-                    val_str = f" {e_val}h" if e_val else ""
-                    display_txt = f"{e_name}{val_str} 시간외"
-                else:
-                    display_txt = f"{e_name} {e_type}"
+                    if str(e_val).replace('.','').isdigit():
+                        display_txt = f"{e_name} 시간외 {e_val}h"
+                    else:
+                        display_txt = f"{e_name} 시간외 {e_val}"
                 
                 indiv_html += f'<div class="badge" style="background-color:{bg_c}; color:{fg_c};">{display_txt}</div>'
 
@@ -437,17 +444,12 @@ tab_cal, tab_my, tab_stay, tab_mon, tab_lost = st.tabs(["📅 근무", "✍️ �
 with tab_cal:
     if 'curr_date' not in st.session_state: st.session_state.curr_date = datetime.now()
     
-    # -------------------------------------------------------------
-    # [수정된 부분] 정확한 월 이동 로직
-    # -------------------------------------------------------------
+    # [월 이동 로직]
     def change_month(amount):
         curr = st.session_state.curr_date
-        
-        # 현재 월 + 이동할 값
         new_year = curr.year
         new_month = curr.month + amount
         
-        # 연도/월 보정 (12월 초과 또는 1월 미만 처리)
         if new_month > 12:
             new_month = 1
             new_year += 1
@@ -455,9 +457,7 @@ with tab_cal:
             new_month = 12
             new_year -= 1
             
-        # 해당 월의 1일로 설정
         st.session_state.curr_date = curr.replace(year=new_year, month=new_month, day=1)
-    # -------------------------------------------------------------
     
     c1, c2, c3 = st.columns([1, 2, 1])
     with c1: st.button("◀", on_click=change_month, args=(-1,), use_container_width=True)
@@ -812,8 +812,6 @@ with tab_lost:
                             set_data("lost_found", latest_items)
                             st.toast("삭제 저장됨")
                             st.rerun()
-
-
 
 
 
