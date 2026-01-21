@@ -278,7 +278,6 @@ def get_auto_duty_members(curr_date, sch_data):
         
     return duty_list
 
-# --- 달력 그리기 ---
 # --- [수정] 달력 그리기 ---
 def draw_calendar(year, month, sch_data, my_filter=None):
     records = normalize_data(sch_data.get("records", {}))
@@ -297,11 +296,9 @@ def draw_calendar(year, month, sch_data, my_filter=None):
     time_type = rules.get("time_type", "split")
     rotation_type = rules.get("rotation_type", "fixed")
     
-    # 기본 휴무일 설정
     base_off1 = rules.get("t1_off", [])
     base_off2 = rules.get("t2_off", [])
     
-    # [수정] self 제거하고 위에서 만든 변수 그대로 사용
     t1_origin = t1_list
     t2_origin = t2_list
 
@@ -314,7 +311,6 @@ def draw_calendar(year, month, sch_data, my_filter=None):
     month_days = cal.monthdayscalendar(year, month)
     
     for r_idx, week in enumerate(month_days):
-        # 격주 로직 적용
         if rotation_type == "biweekly" and (r_idx % 2 != 0):
             curr_off1, curr_off2 = base_off2, base_off1
         else:
@@ -338,13 +334,11 @@ def draw_calendar(year, month, sch_data, my_filter=None):
                     if isinstance(r, dict) and r.get('type') == '당직': 
                         rest_members.append(r.get('name'))
             
-            # 오늘자 기록 로드
             today_recs_raw = records.get(date_str, [])
             if isinstance(today_recs_raw, dict): today_recs = list(today_recs_raw.values())
-            elif isinstance(today_recs_raw, list): today_recs = [x for x in today_recs_raw if x]
+            elif isinstance(today_recs_raw, list): today_recs = [x for x in today_recs if x]
             else: today_recs = []
 
-            # 휴무자 및 특별근무자 분류
             off_names = set()
             special_names = set()
 
@@ -355,7 +349,6 @@ def draw_calendar(year, month, sch_data, my_filter=None):
                 elif r.get('type') == '특별근무':
                     special_names.add(r.get('name'))
 
-            # 근무자 명단 확정
             is_t1_rule_work = (c_idx not in curr_off1)
             is_t2_rule_work = (c_idx not in curr_off2)
 
@@ -371,7 +364,6 @@ def draw_calendar(year, month, sch_data, my_filter=None):
 
             t1_str, t2_str = ", ".join(t1_today), ", ".join(t2_today)
             
-            # 근무 박스 HTML 생성
             work_html = ""
             weekday = curr_date.weekday() 
             is_t1_off, is_t2_off = (weekday in curr_off1), (weekday in curr_off2)
@@ -395,7 +387,7 @@ def draw_calendar(year, month, sch_data, my_filter=None):
             else:
                 work_html += '<div class="work-box wb-rest">휴무</div>'
 
-            # --- 개인 일정 뱃지 ---
+            # --- [수정된 부분] 개인 일정 뱃지 ---
             indiv_html = ""
             for evt in today_recs:
                 if not isinstance(evt, dict): continue
@@ -403,15 +395,28 @@ def draw_calendar(year, month, sch_data, my_filter=None):
                 e_type, e_name, e_val = evt.get('type',''), evt.get('name',''), evt.get('val','')
                 
                 if e_type in ["당직휴무", "휴무", "팀휴무"]: continue 
-                if e_type == "특별근무": continue 
 
-                cls, txt = "bg-gray", ""
-                if e_type == "당직": cls, txt = "bg-night", f"🌙{e_name}"
-                elif e_type == "연차": cls, txt = "bg-leave", f"🌴{e_name}"
-                elif e_type == "시간외": cls, txt = "bg-ot",  f"{e_name} {e_val if e_val else ''}"
-                else: txt = f"{e_name} {e_type}"
+                bg_c, fg_c = "#eee", "black"
+                display_txt = f"{r_name} {r_type}"
+
+                # 1. 특별근무: 뱃지는 보이되 이름만 표시 (색상은 짙은 회색)
+                if e_type == "특별근무": 
+                    bg_c, fg_c = "#495057", "white" 
+                    display_txt = f"{e_name}"
+                elif e_type == "당직": 
+                    bg_c, fg_c = "#D32F2F", "white"
+                    display_txt = f"{e_name} 당직"
+                elif e_type == "연차": 
+                    bg_c, fg_c = "#2E7D32", "white"
+                    display_txt = f"{e_name} 연차"
+                elif e_type == "시간외": 
+                    bg_c, fg_c = "#1A237E", "white"
+                    val_str = f" {e_val}h" if e_val else ""
+                    display_txt = f"{e_name}{val_str} 시간외"
+                else:
+                    display_txt = f"{e_name} {e_type}"
                 
-                indiv_html += f'<div class="badge {cls}">{txt}</div>'
+                indiv_html += f'<div class="badge" style="background-color:{bg_c}; color:{fg_c};">{display_txt}</div>'
 
             html += f'<div class="cal-cell"><div class="date-num">{day}</div>{work_html}{indiv_html}</div>'
     html += '</div></div>'
@@ -802,6 +807,7 @@ with tab_lost:
                             set_data("lost_found", latest_items)
                             st.toast("삭제 저장됨")
                             st.rerun()
+
 
 
 
