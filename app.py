@@ -279,6 +279,7 @@ def get_auto_duty_members(curr_date, sch_data):
     return duty_list
 
 # --- [수정] 달력 그리기 (9-18 규칙 적용) ---
+# --- 달력 그리기 ---
 def draw_calendar(year, month, sch_data, my_filter=None):
     records = normalize_data(sch_data.get("records", {}))
     teams = normalize_data(sch_data.get("teams", {}))
@@ -293,10 +294,17 @@ def draw_calendar(year, month, sch_data, my_filter=None):
     rules = month_rules.get(month_key, {})
     
     start_team = rules.get("start_team", "1")
-    time_type = rules.get("time_type", "split") # [NEW] 시간 타입 가져오기
-    off1 = rules.get("t1_off", [4, 5]) 
-    off2 = rules.get("t2_off", [6, 0]) 
+    time_type = rules.get("time_type", "split")
+    rotation_type = rules.get("rotation_type", "fixed")
     
+    # 기본 휴무일 설정 (첫 주 기준)
+    base_off1 = rules.get("t1_off", [])
+    base_off2 = rules.get("t2_off", [])
+    
+    # 기존 코드에서 누락된 부분 추가
+    t1_origin = self.sch_data["teams"].get("1", []) if hasattr(self, 'sch_data') else t1_list
+    t2_origin = self.sch_data["teams"].get("2", []) if hasattr(self, 'sch_data') else t2_list
+
     html = '<div class="cal-container"><div class="cal-header-row">'
     days = ['월', '화', '수', '목', '금', '토', '일']
     for d in days: html += f'<div class="cal-header-item">{d}</div>'
@@ -306,6 +314,12 @@ def draw_calendar(year, month, sch_data, my_filter=None):
     month_days = cal.monthdayscalendar(year, month)
     
     for r_idx, week in enumerate(month_days):
+        # 격주 로직 적용
+        if rotation_type == "biweekly" and (r_idx % 2 != 0):
+            curr_off1, curr_off2 = base_off2, base_off1
+        else:
+            curr_off1, curr_off2 = base_off1, base_off2
+
         for c_idx, day in enumerate(week):
             if day == 0:
                 html += '<div class="cal-cell empty"></div>'
@@ -313,10 +327,9 @@ def draw_calendar(year, month, sch_data, my_filter=None):
             
             curr_date = datetime(year, month, day)
             date_str = f"{year}-{month:02d}-{day:02d}"
-            
             prev_str = (curr_date - timedelta(days=1)).strftime("%Y-%m-%d")
-            rest_members = []
             
+            rest_members = []
             if prev_str in records:
                 prev_recs = records[prev_str]
                 if isinstance(prev_recs, dict): prev_recs = list(prev_recs.values())
@@ -325,69 +338,91 @@ def draw_calendar(year, month, sch_data, my_filter=None):
                     if isinstance(r, dict) and r.get('type') == '당직': 
                         rest_members.append(r.get('name'))
             
-            if date_str in records:
-                today_recs = records[date_str]
-                if isinstance(today_recs, dict): today_recs = list(today_recs.values())
-                elif isinstance(today_recs, list): today_recs = [x for x in today_recs if x]
-                for r in today_recs:
-                    if r.get('type') in ['당직휴무', '휴무']:
-                        rest_members.append(r.get('name'))
+            # 오늘자 기록 로드
+            today_recs_raw = records.get(date_str, [])
+            if isinstance(today_recs_raw, dict): today_recs = list(today_recs_raw.values())
+            elif isinstance(today_recs_raw, list): today_recs = [x for x in today_recs_raw if x]
+            else: today_recs = []
 
-            t1_today = [m for m in t1_list if m not in rest_members]
-            t2_today = [m for m in t2_list if m not in rest_members]
+            # 휴무자 및 특별근무자 분류
+            off_names = set()
+            special_names = set()
+
+            for r in today_recs:
+                if r.get('type') in ['당직휴무', '휴무', '팀휴무']:
+                    rest_members.append(r.get('name'))
+                    off_names.add(r.get('name'))
+                elif r.get('type') == '특별근무':
+                    special_names.add(r.get('name'))
+
+            # 근무자 명단 확정
+            # 규칙상 근무일인지 확인
+            is_t1_rule_work = (c_idx not in curr_off1)
+            is_t2_rule_work = (c_idx not in curr_off2)
+
+            t1_today = []
+            for m in t1_list:
+                # (규칙상 근무 & 제외 안됨) OR (특별근무 명단에 있음)
+                if (is_t1_rule_work and m not in off_names) or (m in special_names):
+                    t1_today.append(m)
+            
+            t2_today = []
+            for m in t2_list:
+                if (is_t2_rule_work and m not in off_names) or (m in special_names):
+                    t2_today.append(m)
+
             t1_str, t2_str = ", ".join(t1_today), ", ".join(t2_today)
             
+            # 근무 박스 HTML 생성
             work_html = ""
             weekday = curr_date.weekday() 
-            is_t1_off, is_t2_off = (weekday in off1), (weekday in off2)
+            is_t1_off, is_t2_off = (weekday in curr_off1), (weekday in curr_off2)
             
-            # --- [수정] 근무자 표시 로직 ---
             if not is_t1_off and not is_t2_off:
-                # 두 팀 모두 근무하는 평일
                 is_even_week = (r_idx % 2 == 0)
+                if start_team == "1": duty_a, duty_b = (t1_str, t2_str) if is_even_week else (t2_str, t1_str)
+                else: duty_a, duty_b = (t2_str, t1_str) if is_even_week else (t1_str, t2_str)
                 
-                # 순서 정하기 (A위치 / B위치)
-                if start_team == "1": 
-                    duty_a_str, duty_b_str = (t1_str, t2_str) if is_even_week else (t2_str, t1_str)
-                else: 
-                    duty_a_str, duty_b_str = (t2_str, t1_str) if is_even_week else (t1_str, t2_str)
-                
-                # 시간 타입에 따라 표시 텍스트 변경
+                # 9-18 통합 여부에 따라 표시
                 if time_type == "unified":
-                    # 통합 근무 (9-18)
-                    if duty_a_str: work_html += f'<div class="work-box wb-a">09-18 {duty_a_str}</div>'
-                    if duty_b_str: work_html += f'<div class="work-box wb-b">09-18 {duty_b_str}</div>'
+                    if duty_a: work_html += f'<div class="work-box wb-a">09-18 {duty_a}</div>'
+                    if duty_b: work_html += f'<div class="work-box wb-b">09-18 {duty_b}</div>'
                 else:
-                    # 기본 분리 근무 (A 08-17, B 11-20)
-                    if duty_a_str: work_html += f'<div class="work-box wb-a">A {duty_a_str}</div>'
-                    if duty_b_str: work_html += f'<div class="work-box wb-b">B {duty_b_str}</div>'
+                    if duty_a: work_html += f'<div class="work-box wb-a">A {duty_a}</div>'
+                    if duty_b: work_html += f'<div class="work-box wb-b">B {duty_b}</div>'
 
             elif is_t1_off and not is_t2_off:
-                if t2_str: work_html += f'<div class="work-box wb-b"> {t2_str}</div>'
+                # 1조 휴무 -> 2조만 근무
+                if t2_str: work_html += f'<div class="work-box wb-b">09-18 {t2_str}</div>'
             elif is_t2_off and not is_t1_off:
-                if t1_str: work_html += f'<div class="work-box wb-a"> {t1_str}</div>'
+                # 2조 휴무 -> 1조만 근무
+                if t1_str: work_html += f'<div class="work-box wb-a">09-18 {t1_str}</div>'
             else:
                 work_html += '<div class="work-box wb-rest">휴무</div>'
 
+            # --- [수정된 부분] 개인 일정 뱃지 ---
             indiv_html = ""
-            if date_str in records:
-                day_recs = records[date_str]
-                if isinstance(day_recs, dict): day_recs = list(day_recs.values())
-                elif isinstance(day_recs, list): day_recs = [x for x in day_recs if x]
-                for evt in day_recs:
-                    if not isinstance(evt, dict): continue
-                    if my_filter and my_filter != "전체 보기" and evt.get('name') != my_filter: continue
-                    e_type, e_name, e_val = evt.get('type',''), evt.get('name',''), evt.get('val','')
-                    
-                    if e_type in ["당직휴무", "휴무", "팀휴무"]: continue 
+            for evt in today_recs:
+                if not isinstance(evt, dict): continue
+                if my_filter and my_filter != "전체 보기" and evt.get('name') != my_filter: continue
+                e_type, e_name, e_val = evt.get('type',''), evt.get('name',''), evt.get('val','')
+                
+                # 화면에 표시하지 않을 타입들
+                if e_type in ["당직휴무", "휴무", "팀휴무"]: continue 
 
-                    cls, txt = "bg-gray", ""
-                    if e_type == "당직": cls, txt = "bg-night", f"🌙{e_name}"
-                    elif e_type == "연차": cls, txt = "bg-leave", f"🌴{e_name}"
-                    elif e_type == "시간외": cls, txt = "bg-ot",  f"{e_name} {e_val if e_val else ''}"
-                    else: txt = f"{e_name} {e_type}"
-                    
-                    indiv_html += f'<div class="badge {cls}">{txt}</div>'
+                # ----------------------------------------------------
+                # [핵심] 특별근무일 경우 뱃지를 아예 표시하지 않음
+                # (이미 위에서 근무자 명단(work_html)에 이름이 포함되었기 때문)
+                if e_type == "특별근무": continue 
+                # ----------------------------------------------------
+
+                cls, txt = "bg-gray", ""
+                if e_type == "당직": cls, txt = "bg-night", f"🌙{e_name}"
+                elif e_type == "연차": cls, txt = "bg-leave", f"🌴{e_name}"
+                elif e_type == "시간외": cls, txt = "bg-ot",  f"{e_name} {e_val if e_val else ''}"
+                else: txt = f"{e_name} {e_type}"
+                
+                indiv_html += f'<div class="badge {cls}">{txt}</div>'
 
             html += f'<div class="cal-cell"><div class="date-num">{day}</div>{work_html}{indiv_html}</div>'
     html += '</div></div>'
@@ -778,3 +813,4 @@ with tab_lost:
                             set_data("lost_found", latest_items)
                             st.toast("삭제 저장됨")
                             st.rerun()
+
