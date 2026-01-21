@@ -279,6 +279,7 @@ def get_auto_duty_members(curr_date, sch_data):
     return duty_list
 
 # --- [수정 완료] 달력 그리기 ---
+# --- [수정] 달력 그리기 (특별근무 통합 표시) ---
 def draw_calendar(year, month, sch_data, my_filter=None):
     records = normalize_data(sch_data.get("records", {}))
     teams = normalize_data(sch_data.get("teams", {}))
@@ -296,7 +297,6 @@ def draw_calendar(year, month, sch_data, my_filter=None):
     time_type = rules.get("time_type", "split")
     rotation_type = rules.get("rotation_type", "fixed")
     
-    # 기본 휴무일
     base_off1 = rules.get("t1_off", [])
     base_off2 = rules.get("t2_off", [])
     
@@ -312,11 +312,23 @@ def draw_calendar(year, month, sch_data, my_filter=None):
     month_days = cal.monthdayscalendar(year, month)
     
     for r_idx, week in enumerate(month_days):
-        # 격주 로직 적용
+        # 1. 주차별 로테이션 상태 확인
         if rotation_type == "biweekly" and (r_idx % 2 != 0):
+            # 격주 모드 & 홀수 주차 -> 반대로
             curr_off1, curr_off2 = base_off2, base_off1
+        elif rotation_type == "two_weeks":
+            # 2주 단위 모드
+            rot_state = (r_idx // 2) % 2
+            if rot_state == 1: curr_off1, curr_off2 = base_off2, base_off1
+            else: curr_off1, curr_off2 = base_off1, base_off2
         else:
+            # 고정 모드
             curr_off1, curr_off2 = base_off1, base_off2
+
+        # 2. A조/B조 순서 결정 (누가 파란색/오전이고 누가 주황색/오후인지)
+        is_even_week = (r_idx % 2 == 0)
+        # start_team이 1이면 짝수주에 1조가 A(먼저)
+        is_t1_first = (start_team == "1") if is_even_week else (start_team == "2")
 
         for c_idx, day in enumerate(week):
             if day == 0:
@@ -325,40 +337,27 @@ def draw_calendar(year, month, sch_data, my_filter=None):
             
             curr_date = datetime(year, month, day)
             date_str = f"{year}-{month:02d}-{day:02d}"
-            prev_str = (curr_date - timedelta(days=1)).strftime("%Y-%m-%d")
             
-            rest_members = []
-            if prev_str in records:
-                prev_recs = records[prev_str]
-                if isinstance(prev_recs, dict): prev_recs = list(prev_recs.values())
-                elif isinstance(prev_recs, list): prev_recs = [x for x in prev_recs if x]
-                for r in prev_recs:
-                    if isinstance(r, dict) and r.get('type') == '당직': 
-                        rest_members.append(r.get('name'))
-            
-            # 오늘자 기록 로드 (raw 데이터를 먼저 받고 리스트 변환)
+            # 기록 로드
             today_recs_raw = records.get(date_str, [])
-            if isinstance(today_recs_raw, dict): 
-                today_recs = list(today_recs.values())
-            elif isinstance(today_recs_raw, list): 
-                today_recs = [x for x in today_recs_raw if x]
-            else: 
-                today_recs = []
+            if isinstance(today_recs_raw, dict): today_recs = list(today_recs.values())
+            elif isinstance(today_recs_raw, list): today_recs = [x for x in today_recs_raw if x]
+            else: today_recs = []
 
             off_names = set()
             special_names = set()
 
             for r in today_recs:
                 if r.get('type') in ['당직휴무', '휴무', '팀휴무']:
-                    rest_members.append(r.get('name'))
                     off_names.add(r.get('name'))
                 elif r.get('type') == '특별근무':
                     special_names.add(r.get('name'))
 
-            # 근무자 명단 확정
+            # 규칙상 근무 여부
             is_t1_rule_work = (c_idx not in curr_off1)
             is_t2_rule_work = (c_idx not in curr_off2)
 
+            # 최종 근무자 명단 (특별근무자 포함)
             t1_today = []
             for m in t1_list:
                 if (is_t1_rule_work and m not in off_names) or (m in special_names):
@@ -369,75 +368,73 @@ def draw_calendar(year, month, sch_data, my_filter=None):
                 if (is_t2_rule_work and m not in off_names) or (m in special_names):
                     t2_today.append(m)
 
-            t1_str, t2_str = ", ".join(t1_today), ", ".join(t2_today)
+            t1_str = ", ".join(t1_today)
+            t2_str = ", ".join(t2_today)
             
-            # 근무 박스 HTML 생성
+            # --- 근무 박스 HTML 생성 ---
             work_html = ""
-            weekday = curr_date.weekday() 
-            is_t1_off, is_t2_off = (weekday in curr_off1), (weekday in curr_off2)
             
-            if not is_t1_off and not is_t2_off:
-                is_even_week = (r_idx % 2 == 0)
-                if start_team == "1": duty_a, duty_b = (t1_str, t2_str) if is_even_week else (t2_str, t1_str)
-                else: duty_a, duty_b = (t2_str, t1_str) if is_even_week else (t1_str, t2_str)
+            # (1) A조 (상단, 파란색 계열) 처리
+            team_a_list = t1_today if is_t1_first else t2_today
+            team_a_is_rule = is_t1_rule_work if is_t1_first else is_t2_rule_work
+            
+            if team_a_list:
+                # 시간 라벨 결정
+                if not team_a_is_rule: # 규칙상 휴무인데 나옴(특별근무)
+                    lbl = "[09-18]"
+                elif time_type == "unified": # 통합 근무 설정
+                    lbl = "[09-18]"
+                else: # 정규 A조 근무
+                    lbl = "[08-17]"
                 
-                if time_type == "unified":
-                    if duty_a: work_html += f'<div class="work-box wb-a">09-18 {duty_a}</div>'
-                    if duty_b: work_html += f'<div class="work-box wb-b">09-18 {duty_b}</div>'
-                else:
-                    if duty_a: work_html += f'<div class="work-box wb-a">A {duty_a}</div>'
-                    if duty_b: work_html += f'<div class="work-box wb-b">B {duty_b}</div>'
+                work_html += f'<div class="work-box wb-a">{lbl} {", ".join(team_a_list)}</div>'
 
-            elif is_t1_off and not is_t2_off:
-                if t2_str: work_html += f'<div class="work-box wb-b">09-18 {t2_str}</div>'
-            elif is_t2_off and not is_t1_off:
-                if t1_str: work_html += f'<div class="work-box wb-a">09-18 {t1_str}</div>'
-            else:
-                work_html += '<div class="work-box wb-rest">휴무</div>'
+            # (2) B조 (하단, 주황색 계열) 처리
+            team_b_list = t2_today if is_t1_first else t1_today
+            team_b_is_rule = is_t2_rule_work if is_t1_first else is_t1_rule_work
+            
+            if team_b_list:
+                # 시간 라벨 결정
+                if not team_b_is_rule: # 규칙상 휴무인데 나옴(특별근무)
+                    lbl = "[09-18]"
+                elif time_type == "unified": # 통합 근무 설정
+                    lbl = "[09-18]"
+                else: # 정규 B조 근무
+                    lbl = "[11-20]"
+                
+                work_html += f'<div class="work-box wb-b">{lbl} {", ".join(team_b_list)}</div>'
 
-            # --- 개인 일정 뱃지 ---
+            # (3) 근무자가 아무도 없으면 휴무 표시
+            if not team_a_list and not team_b_list:
+                 work_html += '<div class="work-box wb-rest">휴무</div>'
+
+            # --- 개인 일정 뱃지 (특별근무 제외) ---
             indiv_html = ""
             for evt in today_recs:
                 if not isinstance(evt, dict): continue
                 if my_filter and my_filter != "전체 보기" and evt.get('name') != my_filter: continue
                 e_type, e_name, e_val = evt.get('type',''), evt.get('name',''), evt.get('val','')
                 
+                # 표시하지 않을 타입들
                 if e_type in ["당직휴무", "휴무", "팀휴무"]: continue 
-
-                # [수정] 뱃지 생성 로직 (특별근무는 이름만 표시)
-                if e_type == "특별근무": 
-                    # 근무자가 이미 규칙상 근무일이면 뱃지를 숨김 (중복 표시 방지)
-                    in_t1 = e_name in t1_list
-                    in_t2 = e_name in t2_list
-                    
-                    if (in_t1 and is_t1_rule_work and e_name not in off_names) or \
-                       (in_t2 and is_t2_rule_work and e_name not in off_names):
-                        continue
-
-                    # 규칙상 휴무일인데 특별근무인 경우만 뱃지 표시 (이름만)
-                    bg_c, fg_c = "#495057", "white" 
-                    display_txt = f"{e_name}"
                 
-                else:
-                    # 그 외 (당직, 연차, 시간외 등)
-                    bg_c, fg_c = "#eee", "black"
-                    display_txt = f"{e_name} {e_type}"
+                # [핵심] 특별근무는 위에서 이미 박스에 넣었으므로 뱃지 생략
+                if e_type == "특별근무": continue 
 
-                    if e_type == "당직": 
-                        bg_c, fg_c = "#D32F2F", "white"
-                        display_txt = f"{e_name} 당직"
-                    elif e_type == "연차": 
-                        bg_c, fg_c = "#2E7D32", "white"
-                        if str(e_val).replace('.','').isdigit():
-                            display_txt = f"{e_name} 연차 {e_val}h"
-                        else:
-                            display_txt = f"{e_name} 연차"
-                    elif e_type == "시간외": 
-                        bg_c, fg_c = "#1A237E", "white"
-                        if str(e_val).replace('.','').isdigit():
-                            display_txt = f"{e_name} 시간외 {e_val}h"
-                        else:
-                            display_txt = f"{e_name} 시간외 {e_val}"
+                bg_c, fg_c = "#eee", "black"
+                display_txt = f"{e_name} {e_type}"
+
+                if e_type == "당직": 
+                    bg_c, fg_c = "#D32F2F", "white"
+                    display_txt = f"{e_name} 당직"
+                elif e_type == "연차": 
+                    bg_c, fg_c = "#2E7D32", "white"
+                    if str(e_val).replace('.','').isdigit(): display_txt = f"{e_name} 연차 {e_val}h"
+                    else: display_txt = f"{e_name} 연차"
+                elif e_type == "시간외": 
+                    bg_c, fg_c = "#1A237E", "white"
+                    if str(e_val).replace('.','').isdigit(): display_txt = f"{e_name} 시간외 {e_val}h"
+                    else: display_txt = f"{e_name} 시간외 {e_val}"
                 
                 indiv_html += f'<div class="badge" style="background-color:{bg_c}; color:{fg_c};">{display_txt}</div>'
 
@@ -823,4 +820,5 @@ with tab_lost:
                             set_data("lost_found", latest_items)
                             st.toast("삭제 저장됨")
                             st.rerun()
+
 
