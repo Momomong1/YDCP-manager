@@ -278,7 +278,6 @@ def get_auto_duty_members(curr_date, sch_data):
         
     return duty_list
 
-# --- [수정] 달력 그리기 (9-18 규칙 적용) ---
 # --- 달력 그리기 ---
 def draw_calendar(year, month, sch_data, my_filter=None):
     records = normalize_data(sch_data.get("records", {}))
@@ -813,4 +812,5 @@ with tab_lost:
                             set_data("lost_found", latest_items)
                             st.toast("삭제 저장됨")
                             st.rerun()
+
 
