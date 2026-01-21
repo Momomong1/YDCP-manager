@@ -336,7 +336,7 @@ def draw_calendar(year, month, sch_data, my_filter=None):
                     if isinstance(r, dict) and r.get('type') == '당직': 
                         rest_members.append(r.get('name'))
             
-            # [오류 수정됨] 오늘자 기록 로드 (raw 데이터를 먼저 받고 리스트 변환)
+            # 오늘자 기록 로드 (raw 데이터를 먼저 받고 리스트 변환)
             today_recs_raw = records.get(date_str, [])
             if isinstance(today_recs_raw, dict): 
                 today_recs = list(today_recs.values())
@@ -404,29 +404,40 @@ def draw_calendar(year, month, sch_data, my_filter=None):
                 
                 if e_type in ["당직휴무", "휴무", "팀휴무"]: continue 
 
-                bg_c, fg_c = "#eee", "black"
-                display_txt = f"{e_name} {e_type}"
-
-                # 특별근무: 뱃지 보이게 하되 이름만 표시
+                # [수정] 뱃지 생성 로직 (특별근무는 이름만 표시)
                 if e_type == "특별근무": 
+                    # 근무자가 이미 규칙상 근무일이면 뱃지를 숨김 (중복 표시 방지)
+                    in_t1 = e_name in t1_list
+                    in_t2 = e_name in t2_list
+                    
+                    if (in_t1 and is_t1_rule_work and e_name not in off_names) or \
+                       (in_t2 and is_t2_rule_work and e_name not in off_names):
+                        continue
+
+                    # 규칙상 휴무일인데 특별근무인 경우만 뱃지 표시 (이름만)
                     bg_c, fg_c = "#495057", "white" 
                     display_txt = f"{e_name}"
-                elif e_type == "당직": 
-                    bg_c, fg_c = "#D32F2F", "white"
-                    display_txt = f"{e_name} 당직"
-                elif e_type == "연차": 
-                    bg_c, fg_c = "#2E7D32", "white"
-                    # 숫자만 있으면 h 붙임
-                    if str(e_val).replace('.','').isdigit():
-                        display_txt = f"{e_name} 연차 {e_val}h"
-                    else:
-                        display_txt = f"{e_name} 연차 {e_val}" if e_val else f"{e_name} 연차"
-                elif e_type == "시간외": 
-                    bg_c, fg_c = "#1A237E", "white"
-                    if str(e_val).replace('.','').isdigit():
-                        display_txt = f"{e_name} 시간외 {e_val}h"
-                    else:
-                        display_txt = f"{e_name} 시간외 {e_val}"
+                
+                else:
+                    # 그 외 (당직, 연차, 시간외 등)
+                    bg_c, fg_c = "#eee", "black"
+                    display_txt = f"{e_name} {e_type}"
+
+                    if e_type == "당직": 
+                        bg_c, fg_c = "#D32F2F", "white"
+                        display_txt = f"{e_name} 당직"
+                    elif e_type == "연차": 
+                        bg_c, fg_c = "#2E7D32", "white"
+                        if str(e_val).replace('.','').isdigit():
+                            display_txt = f"{e_name} 연차 {e_val}h"
+                        else:
+                            display_txt = f"{e_name} 연차"
+                    elif e_type == "시간외": 
+                        bg_c, fg_c = "#1A237E", "white"
+                        if str(e_val).replace('.','').isdigit():
+                            display_txt = f"{e_name} 시간외 {e_val}h"
+                        else:
+                            display_txt = f"{e_name} 시간외 {e_val}"
                 
                 indiv_html += f'<div class="badge" style="background-color:{bg_c}; color:{fg_c};">{display_txt}</div>'
 
@@ -812,6 +823,4 @@ with tab_lost:
                             set_data("lost_found", latest_items)
                             st.toast("삭제 저장됨")
                             st.rerun()
-
-
 
