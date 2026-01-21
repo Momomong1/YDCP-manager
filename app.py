@@ -279,6 +279,7 @@ def get_auto_duty_members(curr_date, sch_data):
     return duty_list
 
 # --- [수정] 달력 그리기 ---
+# --- [수정] 달력 그리기 ---
 def draw_calendar(year, month, sch_data, my_filter=None):
     records = normalize_data(sch_data.get("records", {}))
     teams = normalize_data(sch_data.get("teams", {}))
@@ -334,10 +335,14 @@ def draw_calendar(year, month, sch_data, my_filter=None):
                     if isinstance(r, dict) and r.get('type') == '당직': 
                         rest_members.append(r.get('name'))
             
+            # [오류 수정 부분] 오늘자 기록 로드
             today_recs_raw = records.get(date_str, [])
-            if isinstance(today_recs_raw, dict): today_recs = list(today_recs_raw.values())
-            elif isinstance(today_recs_raw, list): today_recs = [x for x in today_recs if x]
-            else: today_recs = []
+            if isinstance(today_recs_raw, dict): 
+                today_recs = list(today_recs.values())
+            elif isinstance(today_recs_raw, list): 
+                today_recs = [x for x in today_recs_raw if x] # 여기가 수정됨 (_raw 추가)
+            else: 
+                today_recs = []
 
             off_names = set()
             special_names = set()
@@ -387,7 +392,7 @@ def draw_calendar(year, month, sch_data, my_filter=None):
             else:
                 work_html += '<div class="work-box wb-rest">휴무</div>'
 
-            # --- [수정된 부분] 개인 일정 뱃지 ---
+            # --- 개인 일정 뱃지 ---
             indiv_html = ""
             for evt in today_recs:
                 if not isinstance(evt, dict): continue
@@ -399,7 +404,7 @@ def draw_calendar(year, month, sch_data, my_filter=None):
                 bg_c, fg_c = "#eee", "black"
                 display_txt = f"{r_name} {r_type}"
 
-                # 1. 특별근무: 뱃지는 보이되 이름만 표시 (색상은 짙은 회색)
+                # 특별근무: 뱃지 표시는 하되, 글자는 이름만 표시
                 if e_type == "특별근무": 
                     bg_c, fg_c = "#495057", "white" 
                     display_txt = f"{e_name}"
@@ -807,6 +812,7 @@ with tab_lost:
                             set_data("lost_found", latest_items)
                             st.toast("삭제 저장됨")
                             st.rerun()
+
 
 
 
