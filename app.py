@@ -11,11 +11,12 @@ import io
 import uuid
 import requests
 import zipfile
+from urllib.parse import unquote
 
 # --- 기본 설정 ---
 CRED_FILENAME = "service.json" 
 FIREBASE_DB_URL = 'https://ydcpmanager-default-rtdb.firebaseio.com/'
-# [수정] 스토리지 버킷 주소 (gs:// 제외)
+# 스토리지 버킷 주소 (gs:// 제외)
 STORAGE_BUCKET_URL = 'ydcpmanager.firebasestorage.app'
 
 st.set_page_config(
@@ -55,7 +56,6 @@ if not st.session_state.logged_in:
 st.markdown("""
 <style>
     .stApp { font-family: 'Pretendard', 'Malgun Gothic', sans-serif; }
-    /* 캘린더 스타일 (기존 유지) */
     .cal-container { display: flex; flex-direction: column; border: 1px solid #ddd; background-color: #fff; border-radius: 8px; overflow: hidden; }
     .cal-header-row { display: grid; grid-template-columns: repeat(7, 1fr); background-color: #f8f9fa; border-bottom: 1px solid #ddd; }
     .cal-header-item { text-align: center; font-weight: bold; padding: 8px 0; font-size: 0.9rem; color: #495057; }
@@ -118,9 +118,31 @@ if not init_firebase(): st.stop()
 # --- DB 헬퍼 ---
 def get_data(path): return db.reference(f'yuldong_data/{path}').get()
 def set_data(path, data): db.reference(f'yuldong_data/{path}').set(data)
+def delete_data(path): db.reference(f'yuldong_data/{path}').delete()
+
 def normalize_data(data):
     if isinstance(data, list): return {str(i): v for i, v in enumerate(data) if v is not None}
     return data if data else {}
+
+# --- [NEW] 스토리지 파일 삭제 헬퍼 ---
+def delete_storage_file(file_url):
+    """URL에서 파일 경로를 추출하여 스토리지에서 삭제"""
+    try:
+        if not file_url: return
+        # URL 디코딩 및 경로 추출
+        # 예: https://storage.googleapis.com/bucket_name/work_logs%2Ffile.jpg
+        # 1. 'work_logs' 이후의 경로를 찾아야 함
+        decoded_url = unquote(file_url)
+        if "work_logs" in decoded_url:
+            # work_logs/xxxx.jpg 형태의 blob 이름 추출
+            blob_name = "work_logs/" + decoded_url.split("work_logs/")[-1].split("?")[0]
+            bucket = storage.bucket()
+            blob = bucket.blob(blob_name)
+            blob.delete()
+            return True
+    except Exception as e:
+        print(f"파일 삭제 실패: {e}")
+        return False
 
 # --- 사이드바 설정 ---
 with st.sidebar:
@@ -301,7 +323,7 @@ st.title("🏕️ 율동공원 관리 시스템")
 
 tab_cal, tab_my, tab_stay, tab_mon, tab_lost, tab_work = st.tabs(["📅 근무", "✍️ 수정", "⛺ 연박", "📊 현황", "🧢 분실", "📷 작업"])
 
-# 1. 근무표 탭 (기존 유지)
+# 1. 근무표 탭
 with tab_cal:
     if 'curr_date' not in st.session_state: st.session_state.curr_date = datetime.now()
     def change_month(amount):
@@ -590,24 +612,71 @@ with tab_lost:
                             set_data("lost_found", latest_items)
                             st.toast("삭제 저장됨"); st.rerun()
 
-# 6. 작업 일지 (사진 여러장 업로드 & ZIP 다운로드)
+# 6. 작업 일지 (사진 여러장 업로드 & ZIP 다운로드 & 용량 관리)
 with tab_work:
     st.subheader("📸 작업 일지 관리")
-    st.caption("사진을 여러 장 선택하면 자동으로 압축되어 저장됩니다.")
     
+    # [NEW] 용량 관리 섹션 (30일 지난 파일 삭제)
+    with st.expander("♻️ 저장소 용량 관리 (오래된 파일 삭제)", expanded=False):
+        st.info("한 달(30일)이 지난 작업 사진과 기록을 일괄 삭제하여 저장소 용량을 확보합니다.")
+        if st.button("🗑️ 30일 지난 데이터 모두 삭제", type="primary"):
+            with st.spinner("오래된 데이터를 검색하고 삭제하는 중..."):
+                try:
+                    all_logs_raw = get_data("work_logs")
+                    if not all_logs_raw:
+                        st.warning("데이터가 없습니다.")
+                    else:
+                        if isinstance(all_logs_raw, dict): 
+                            logs_items = list(all_logs_raw.items())
+                        elif isinstance(all_logs_raw, list): 
+                            logs_items = [(str(i), x) for i, x in enumerate(all_logs_raw) if x]
+                        else: logs_items = []
+                        
+                        del_count = 0
+                        today = datetime.now()
+                        threshold = today - timedelta(days=30) # 30일 기준
+                        
+                        for key, log in logs_items:
+                            log_date_str = log.get('date', '')
+                            try:
+                                # 날짜 파싱 (YYYY-MM-DD HH:MM:SS)
+                                log_date = datetime.strptime(log_date_str, "%Y-%m-%d %H:%M:%S")
+                                if log_date < threshold:
+                                    # 삭제 대상
+                                    # 1. 스토리지 파일 삭제
+                                    urls_to_del = []
+                                    if 'photo_url' in log: urls_to_del.append(log['photo_url'])
+                                    if 'photo_urls' in log and isinstance(log['photo_urls'], list):
+                                        urls_to_del.extend(log['photo_urls'])
+                                    
+                                    for url in urls_to_del:
+                                        delete_storage_file(url)
+                                    
+                                    # 2. DB 항목 삭제
+                                    delete_data(f"work_logs/{key}")
+                                    del_count += 1
+                            except: continue # 날짜 형식 오류 등은 패스
+                        
+                        if del_count > 0:
+                            st.success(f"총 {del_count}건의 오래된 기록을 삭제했습니다.")
+                            st.rerun()
+                        else:
+                            st.info("30일이 지난 데이터가 없습니다.")
+                except Exception as e:
+                    st.error(f"삭제 중 오류 발생: {e}")
+
+    st.divider()
+
     # [1] 업로드 섹션
     with st.expander("➕ 사진 및 작업 등록하기", expanded=True):
-        # [NEW] accept_multiple_files=True 로 여러 장 선택 가능
         uploaded_files = st.file_uploader("사진 선택 (여러 장 가능)", type=['png', 'jpg', 'jpeg'], accept_multiple_files=True)
         work_desc = st.text_input("작업 내용", placeholder="예: A구역 제초작업 완료")
         
         if uploaded_files:
             st.markdown(f"**선택된 사진: {len(uploaded_files)}장**")
-            # 미리보기 (작게 나열)
             cols = st.columns(len(uploaded_files))
             for idx, up_file in enumerate(uploaded_files):
-                if idx < 5: # 너무 많으면 5개까지만 미리보기
-                    cols[idx].image(up_file, width=100)
+                if idx < 5: cols[idx].image(up_file, width=100)
             
             if st.button("모두 업로드 및 저장", type="primary"):
                 if not work_desc:
@@ -615,38 +684,31 @@ with tab_work:
                 else:
                     with st.spinner(f"사진 {len(uploaded_files)}장 압축 및 전송 중..."):
                         try:
-                            # 1. 스토리지 준비
                             bucket = storage.bucket()
                             uploaded_urls = []
                             today_str_short = datetime.now().strftime('%Y%m%d')
                             
-                            # 2. 반복문으로 각 사진 처리
                             for up_file in uploaded_files:
-                                # 이미지 압축
                                 image = Image.open(up_file)
                                 if image.mode in ("RGBA", "P"): image = image.convert("RGB")
-                                image.thumbnail((1024, 1024)) # 리사이징
-                                
+                                image.thumbnail((1024, 1024))
                                 img_byte_arr = io.BytesIO()
-                                image.save(img_byte_arr, format='JPEG', quality=70) # 용량 최적화
+                                image.save(img_byte_arr, format='JPEG', quality=70)
                                 img_byte_arr = img_byte_arr.getvalue()
                                 
-                                # 업로드
                                 fname = f"work_logs/{today_str_short}_{uuid.uuid4().hex[:8]}.jpg"
                                 blob = bucket.blob(fname)
                                 blob.upload_from_string(img_byte_arr, content_type="image/jpeg")
                                 blob.make_public()
                                 uploaded_urls.append(blob.public_url)
                             
-                            # 3. DB 저장 (URL 리스트로 저장)
                             log_entry = {
                                 "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                                 "desc": work_desc,
-                                "photo_urls": uploaded_urls, # [수정] 리스트로 저장
+                                "photo_urls": uploaded_urls,
                                 "writer": "관리자"
                             }
                             db.reference('yuldong_data/work_logs').push(log_entry)
-                            
                             st.success("✅ 모든 사진이 저장되었습니다!")
                             st.rerun()
                         except Exception as e:
@@ -661,13 +723,15 @@ with tab_work:
     view_date = col_date.date_input("조회할 날짜", value=datetime.now())
     view_date_str = view_date.strftime("%Y-%m-%d")
     
-    # DB에서 전체 로그 가져오기
     raw_logs = get_data("work_logs")
     if raw_logs:
-        if isinstance(raw_logs, dict): logs = list(raw_logs.values())
-        elif isinstance(raw_logs, list): logs = [x for x in raw_logs if x]
+        if isinstance(raw_logs, dict): 
+            # key, value 쌍으로 가져와서 key도 저장 (삭제 위해)
+            logs = [{"key": k, **v} for k, v in raw_logs.items()]
+        elif isinstance(raw_logs, list): 
+            logs = [{"key": str(i), **x} for i, x in enumerate(raw_logs) if x]
+        else: logs = []
         
-        # 선택한 날짜에 해당하는 로그만 필터링
         filtered_logs = [l for l in logs if l.get('date', '').startswith(view_date_str)]
         
         if not filtered_logs:
@@ -675,13 +739,10 @@ with tab_work:
         else:
             st.success(f"총 {len(filtered_logs)}건의 작업이 있습니다.")
             
-            # [3] 일괄 ZIP 다운로드 버튼 생성
-            # 해당 날짜의 모든 사진 URL 수집
+            # 일괄 ZIP 다운로드
             all_urls_for_date = []
             for l in filtered_logs:
-                # 구버전(단일 url) 호환
                 if 'photo_url' in l: all_urls_for_date.append(l['photo_url'])
-                # 신버전(리스트 urls)
                 if 'photo_urls' in l and isinstance(l['photo_urls'], list):
                     all_urls_for_date.extend(l['photo_urls'])
             
@@ -692,39 +753,43 @@ with tab_work:
                         with zipfile.ZipFile(zip_buffer, "w") as zf:
                             for idx, url in enumerate(all_urls_for_date):
                                 try:
-                                    # URL에서 이미지 데이터 다운로드
                                     r = requests.get(url)
                                     if r.status_code == 200:
-                                        # ZIP 파일 내 파일명 (date_번호.jpg)
                                         zf.writestr(f"{view_date_str}_{idx+1}.jpg", r.content)
                                 except: pass
-                        
-                        st.download_button(
-                            label="📦 압축 파일(ZIP) 저장하기",
-                            data=zip_buffer.getvalue(),
-                            file_name=f"work_photos_{view_date_str}.zip",
-                            mime="application/zip",
-                            key="dn_zip"
-                        )
+                        st.download_button(label="📦 압축 파일(ZIP) 저장하기", data=zip_buffer.getvalue(), file_name=f"work_photos_{view_date_str}.zip", mime="application/zip", key="dn_zip")
 
-            # 로그 리스트 표시
+            # 로그 리스트 표시 (삭제 버튼 추가)
             for log in filtered_logs:
                 with st.container(border=True):
-                    st.write(f"📝 **{log.get('desc')}**")
-                    st.caption(f"{log.get('date')} | {log.get('writer')}")
+                    c_info, c_del = st.columns([5, 1])
+                    with c_info:
+                        st.write(f"📝 **{log.get('desc')}**")
+                        st.caption(f"{log.get('date')} | {log.get('writer')}")
+                        
+                        imgs_to_show = []
+                        if 'photo_url' in log: imgs_to_show.append(log['photo_url'])
+                        if 'photo_urls' in log and isinstance(log['photo_urls'], list):
+                            imgs_to_show.extend(log['photo_urls'])
+                        
+                        if imgs_to_show:
+                            cols = st.columns(3)
+                            for i, url in enumerate(imgs_to_show):
+                                cols[i % 3].image(url, use_container_width=True)
                     
-                    # 사진 표시 로직 (단일/다중 호환)
-                    imgs_to_show = []
-                    if 'photo_url' in log: imgs_to_show.append(log['photo_url'])
-                    if 'photo_urls' in log and isinstance(log['photo_urls'], list):
-                        imgs_to_show.extend(log['photo_urls'])
-                    
-                    if imgs_to_show:
-                        # 갤러리 형태로 표시 (한 줄에 3개씩)
-                        cols = st.columns(3)
-                        for i, url in enumerate(imgs_to_show):
-                            cols[i % 3].image(url, use_container_width=True)
+                    # [NEW] 개별 삭제 버튼
+                    with c_del:
+                        if st.button("삭제", key=f"del_work_{log['key']}"):
+                            # 1. 파일 삭제
+                            if imgs_to_show:
+                                for url in imgs_to_show:
+                                    delete_storage_file(url)
+                            # 2. DB 삭제
+                            delete_data(f"work_logs/{log['key']}")
+                            st.toast("삭제되었습니다.")
+                            st.rerun()
 
     else:
         st.info("등록된 작업 내역이 없습니다.")
+
 
