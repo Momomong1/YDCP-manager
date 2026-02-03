@@ -9,6 +9,8 @@ import re
 from PIL import Image
 import io
 import uuid
+import requests
+import zipfile
 
 # --- 기본 설정 ---
 CRED_FILENAME = "service.json" 
@@ -48,13 +50,12 @@ if not st.session_state.logged_in:
     st.stop()
 
 # ==========================================
-# 🎨 UI 스타일 (모바일 최적화)
+# 🎨 UI 스타일
 # ==========================================
 st.markdown("""
 <style>
     .stApp { font-family: 'Pretendard', 'Malgun Gothic', sans-serif; }
-    
-    /* 캘린더 스타일 생략 (기존 유지) */
+    /* 캘린더 스타일 (기존 유지) */
     .cal-container { display: flex; flex-direction: column; border: 1px solid #ddd; background-color: #fff; border-radius: 8px; overflow: hidden; }
     .cal-header-row { display: grid; grid-template-columns: repeat(7, 1fr); background-color: #f8f9fa; border-bottom: 1px solid #ddd; }
     .cal-header-item { text-align: center; font-weight: bold; padding: 8px 0; font-size: 0.9rem; color: #495057; }
@@ -71,18 +72,6 @@ st.markdown("""
     .wb-b { background-color: #fff4e6; border: 1px solid #ffe8cc; color: #d9480f; }
     .wb-rest { background-color: #ffe3e3; color: #c92a2a; text-align: center; }
     .badge { font-size: 0.7rem; padding: 3px 4px; border-radius: 4px; margin-top: 1px; color: white; display: block; white-space: normal; line-height: 1.2; }
-    .bg-night { background-color: #D32F2F; } 
-    .bg-leave { background-color: #2E7D32; } 
-    .bg-ot { background-color: #1A237E; }    
-    .bg-gray { background-color: #868e96; }
-    
-    @media (max-width: 600px) { 
-        .cal-header-item { font-size: 0.7rem; padding: 4px 0; } 
-        .cal-cell { min-height: 50px; padding: 2px; } 
-        .date-num { font-size: 0.7rem; margin-bottom: 1px; } 
-        .work-box { font-size: 0.65rem; padding: 2px 3px; letter-spacing: -0.5px; } 
-        .badge { font-size: 0.65rem; padding: 2px 3px; letter-spacing: -0.5px; } 
-    }
     .stat-card { padding: 10px; border-radius: 8px; text-align: center; margin-bottom: 5px; }
     .stat-blue { background-color: #e3f2fd; color: #1565c0; border: 1px solid #90caf9; }
     .stat-green { background-color: #e8f5e9; color: #2e7d32; border: 1px solid #a5d6a7; }
@@ -97,7 +86,6 @@ CRED_PATH = os.path.join(CURRENT_DIR, CRED_FILENAME)
 def init_firebase():
     if firebase_admin._apps: return True
     
-    # [수정] Storage 연결 설정 추가
     fb_config = {
         'databaseURL': FIREBASE_DB_URL,
         'storageBucket': STORAGE_BUCKET_URL
@@ -108,10 +96,8 @@ def init_firebase():
             val = st.secrets["firebase_key"]
             if isinstance(val, str): cred_info = json.loads(val)
             else: cred_info = dict(val)
-            
             if "private_key" in cred_info: 
                 cred_info["private_key"] = cred_info["private_key"].replace("\\n", "\n")
-            
             cred = credentials.Certificate(cred_info)
             firebase_admin.initialize_app(cred, fb_config)
             return True
@@ -163,7 +149,7 @@ def get_auto_duty_members(curr_date, sch_data):
     date_str = curr_date.strftime("%Y-%m-%d")
     month_key = f"{year}-{month:02d}"
     rules = month_rules.get(month_key, {})
-    start_team = rules.get("start_team", "1")
+    
     off1 = rules.get("t1_off", [4, 5]) 
     off2 = rules.get("t2_off", [6, 0]) 
 
@@ -313,10 +299,9 @@ def draw_calendar(year, month, sch_data, my_filter=None):
 # --- 메인 탭 구성 ---
 st.title("🏕️ 율동공원 관리 시스템")
 
-# [수정] 탭 6개로 확장 (작업 탭 추가)
 tab_cal, tab_my, tab_stay, tab_mon, tab_lost, tab_work = st.tabs(["📅 근무", "✍️ 수정", "⛺ 연박", "📊 현황", "🧢 분실", "📷 작업"])
 
-# 1. 근무표 탭
+# 1. 근무표 탭 (기존 유지)
 with tab_cal:
     if 'curr_date' not in st.session_state: st.session_state.curr_date = datetime.now()
     def change_month(amount):
@@ -605,72 +590,141 @@ with tab_lost:
                             set_data("lost_found", latest_items)
                             st.toast("삭제 저장됨"); st.rerun()
 
-# [NEW] 6. 작업 일지 (사진 업로드) 탭
+# 6. 작업 일지 (사진 여러장 업로드 & ZIP 다운로드)
 with tab_work:
-    st.subheader("📸 작업 일지 & 사진")
-    st.caption("갤러리에서 사진을 선택하면 자동으로 압축(데이터 절약)되어 업로드됩니다.")
+    st.subheader("📸 작업 일지 관리")
+    st.caption("사진을 여러 장 선택하면 자동으로 압축되어 저장됩니다.")
     
-    with st.expander("➕ 작업 등록하기", expanded=True):
-        uploaded_file = st.file_uploader("사진 선택 (JPG, PNG)", type=['png', 'jpg', 'jpeg'])
-        work_desc = st.text_input("작업 내용", placeholder="예: B-3 사이트 배전반 점검 완료")
+    # [1] 업로드 섹션
+    with st.expander("➕ 사진 및 작업 등록하기", expanded=True):
+        # [NEW] accept_multiple_files=True 로 여러 장 선택 가능
+        uploaded_files = st.file_uploader("사진 선택 (여러 장 가능)", type=['png', 'jpg', 'jpeg'], accept_multiple_files=True)
+        work_desc = st.text_input("작업 내용", placeholder="예: A구역 제초작업 완료")
         
-        if uploaded_file is not None:
-            st.image(uploaded_file, caption="미리보기", width=200)
-            if st.button("업로드 및 저장", type="primary"):
+        if uploaded_files:
+            st.markdown(f"**선택된 사진: {len(uploaded_files)}장**")
+            # 미리보기 (작게 나열)
+            cols = st.columns(len(uploaded_files))
+            for idx, up_file in enumerate(uploaded_files):
+                if idx < 5: # 너무 많으면 5개까지만 미리보기
+                    cols[idx].image(up_file, width=100)
+            
+            if st.button("모두 업로드 및 저장", type="primary"):
                 if not work_desc:
                     st.warning("작업 내용을 입력해주세요.")
                 else:
-                    with st.spinner("사진 압축 및 전송 중..."):
+                    with st.spinner(f"사진 {len(uploaded_files)}장 압축 및 전송 중..."):
                         try:
-                            # 1. 이미지 압축 로직
-                            image = Image.open(uploaded_file)
-                            if image.mode in ("RGBA", "P"): image = image.convert("RGB")
-                            image.thumbnail((1024, 1024)) # 긴 쪽 기준 1024px로 리사이징
-                            
-                            img_byte_arr = io.BytesIO()
-                            image.save(img_byte_arr, format='JPEG', quality=70) # 용량 최적화
-                            img_byte_arr = img_byte_arr.getvalue()
-                            
-                            # 2. Storage 업로드
+                            # 1. 스토리지 준비
                             bucket = storage.bucket()
-                            fname = f"work_logs/{datetime.now().strftime('%Y%m%d')}_{uuid.uuid4().hex[:8]}.jpg"
-                            blob = bucket.blob(fname)
-                            blob.upload_from_string(img_byte_arr, content_type="image/jpeg")
-                            blob.make_public()
+                            uploaded_urls = []
+                            today_str_short = datetime.now().strftime('%Y%m%d')
                             
-                            # 3. DB 저장
+                            # 2. 반복문으로 각 사진 처리
+                            for up_file in uploaded_files:
+                                # 이미지 압축
+                                image = Image.open(up_file)
+                                if image.mode in ("RGBA", "P"): image = image.convert("RGB")
+                                image.thumbnail((1024, 1024)) # 리사이징
+                                
+                                img_byte_arr = io.BytesIO()
+                                image.save(img_byte_arr, format='JPEG', quality=70) # 용량 최적화
+                                img_byte_arr = img_byte_arr.getvalue()
+                                
+                                # 업로드
+                                fname = f"work_logs/{today_str_short}_{uuid.uuid4().hex[:8]}.jpg"
+                                blob = bucket.blob(fname)
+                                blob.upload_from_string(img_byte_arr, content_type="image/jpeg")
+                                blob.make_public()
+                                uploaded_urls.append(blob.public_url)
+                            
+                            # 3. DB 저장 (URL 리스트로 저장)
                             log_entry = {
                                 "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                                 "desc": work_desc,
-                                "photo_url": blob.public_url,
+                                "photo_urls": uploaded_urls, # [수정] 리스트로 저장
                                 "writer": "관리자"
                             }
                             db.reference('yuldong_data/work_logs').push(log_entry)
                             
-                            st.success("✅ 저장되었습니다!")
+                            st.success("✅ 모든 사진이 저장되었습니다!")
                             st.rerun()
                         except Exception as e:
                             st.error(f"오류: {e}")
 
-    # 최근 작업 내역 표시
     st.divider()
-    st.subheader("📋 최근 작업 내역")
+    
+    # [2] 날짜별 조회 및 다운로드 섹션
+    st.subheader("📅 날짜별 조회 & 다운로드")
+    
+    col_date, col_dummy = st.columns([1, 2])
+    view_date = col_date.date_input("조회할 날짜", value=datetime.now())
+    view_date_str = view_date.strftime("%Y-%m-%d")
+    
+    # DB에서 전체 로그 가져오기
     raw_logs = get_data("work_logs")
     if raw_logs:
         if isinstance(raw_logs, dict): logs = list(raw_logs.values())
         elif isinstance(raw_logs, list): logs = [x for x in raw_logs if x]
         
-        # 최신순 정렬
-        logs.sort(key=lambda x: x.get('date', ''), reverse=True)
+        # 선택한 날짜에 해당하는 로그만 필터링
+        filtered_logs = [l for l in logs if l.get('date', '').startswith(view_date_str)]
         
-        for log in logs[:10]: # 최근 10개만 표시
-            with st.container(border=True):
-                c_img, c_txt = st.columns([1, 2])
-                with c_img:
-                    if log.get('photo_url'):
-                        st.image(log['photo_url'], use_container_width=True)
-                with c_txt:
-                    st.write(f"**{log.get('desc')}**")
+        if not filtered_logs:
+            st.info(f"{view_date_str}에는 작업 기록이 없습니다.")
+        else:
+            st.success(f"총 {len(filtered_logs)}건의 작업이 있습니다.")
+            
+            # [3] 일괄 ZIP 다운로드 버튼 생성
+            # 해당 날짜의 모든 사진 URL 수집
+            all_urls_for_date = []
+            for l in filtered_logs:
+                # 구버전(단일 url) 호환
+                if 'photo_url' in l: all_urls_for_date.append(l['photo_url'])
+                # 신버전(리스트 urls)
+                if 'photo_urls' in l and isinstance(l['photo_urls'], list):
+                    all_urls_for_date.extend(l['photo_urls'])
+            
+            if all_urls_for_date:
+                if st.button(f"📥 이 날짜 사진 전체 다운로드 (ZIP) - {len(all_urls_for_date)}장", type="secondary"):
+                    with st.spinner("사진을 다운로드하여 압축 중입니다..."):
+                        zip_buffer = io.BytesIO()
+                        with zipfile.ZipFile(zip_buffer, "w") as zf:
+                            for idx, url in enumerate(all_urls_for_date):
+                                try:
+                                    # URL에서 이미지 데이터 다운로드
+                                    r = requests.get(url)
+                                    if r.status_code == 200:
+                                        # ZIP 파일 내 파일명 (date_번호.jpg)
+                                        zf.writestr(f"{view_date_str}_{idx+1}.jpg", r.content)
+                                except: pass
+                        
+                        st.download_button(
+                            label="📦 압축 파일(ZIP) 저장하기",
+                            data=zip_buffer.getvalue(),
+                            file_name=f"work_photos_{view_date_str}.zip",
+                            mime="application/zip",
+                            key="dn_zip"
+                        )
+
+            # 로그 리스트 표시
+            for log in filtered_logs:
+                with st.container(border=True):
+                    st.write(f"📝 **{log.get('desc')}**")
                     st.caption(f"{log.get('date')} | {log.get('writer')}")
+                    
+                    # 사진 표시 로직 (단일/다중 호환)
+                    imgs_to_show = []
+                    if 'photo_url' in log: imgs_to_show.append(log['photo_url'])
+                    if 'photo_urls' in log and isinstance(log['photo_urls'], list):
+                        imgs_to_show.extend(log['photo_urls'])
+                    
+                    if imgs_to_show:
+                        # 갤러리 형태로 표시 (한 줄에 3개씩)
+                        cols = st.columns(3)
+                        for i, url in enumerate(imgs_to_show):
+                            cols[i % 3].image(url, use_container_width=True)
+
     else:
         st.info("등록된 작업 내역이 없습니다.")
+
