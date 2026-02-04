@@ -559,7 +559,7 @@ with tab_lost:
         l_loc = c1.text_input("습득 장소")
         l_nm = c2.text_input("물건명")
         # [NEW] 보관 위치 입력
-        l_storage = st.text_input("보관 위치 (선반 번호 등)")
+        l_storage = st.text_input("보관 위치")
         
         if st.button("등록", use_container_width=True):
             if l_loc and l_nm:
@@ -822,3 +822,4 @@ with tab_work:
 
     else:
         st.info("등록된 작업 내역이 없습니다.")
+
