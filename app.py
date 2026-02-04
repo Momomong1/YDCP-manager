@@ -124,17 +124,13 @@ def normalize_data(data):
     if isinstance(data, list): return {str(i): v for i, v in enumerate(data) if v is not None}
     return data if data else {}
 
-# --- [NEW] 스토리지 파일 삭제 헬퍼 ---
+# --- 스토리지 파일 삭제 헬퍼 ---
 def delete_storage_file(file_url):
     """URL에서 파일 경로를 추출하여 스토리지에서 삭제"""
     try:
         if not file_url: return
-        # URL 디코딩 및 경로 추출
-        # 예: https://storage.googleapis.com/bucket_name/work_logs%2Ffile.jpg
-        # 1. 'work_logs' 이후의 경로를 찾아야 함
         decoded_url = unquote(file_url)
         if "work_logs" in decoded_url:
-            # work_logs/xxxx.jpg 형태의 blob 이름 추출
             blob_name = "work_logs/" + decoded_url.split("work_logs/")[-1].split("?")[0]
             bucket = storage.bucket()
             blob = bucket.blob(blob_name)
@@ -560,15 +556,26 @@ with tab_lost:
     
     with st.expander("➕ 분실물 등록 (즉시 저장)", expanded=False):
         c1, c2 = st.columns(2)
-        l_loc = c1.text_input("장소")
+        l_loc = c1.text_input("습득 장소")
         l_nm = c2.text_input("물건명")
+        # [NEW] 보관 위치 입력
+        l_storage = st.text_input("보관 위치 (선반 번호 등)")
+        
         if st.button("등록", use_container_width=True):
             if l_loc and l_nm:
                 latest_raw = get_data("lost_found")
                 latest_items = []
                 if isinstance(latest_raw, dict): latest_items = list(latest_raw.values())
                 elif isinstance(latest_raw, list): latest_items = [x for x in latest_raw if x]
-                new_l = {"date": datetime.now().strftime("%Y-%m-%d"), "item": l_nm, "location": l_loc, "status": "보관중", "return_date": "-"}
+                
+                new_l = {
+                    "date": datetime.now().strftime("%Y-%m-%d"), 
+                    "item": l_nm, 
+                    "location": l_loc, 
+                    "storage": l_storage, # 저장
+                    "status": "보관중", 
+                    "return_date": "-"
+                }
                 latest_items.append(new_l)
                 set_data("lost_found", latest_items)
                 st.toast("클라우드 저장 완료"); st.rerun()
@@ -582,7 +589,9 @@ with tab_lost:
             with c_txt:
                 icon = "🟢" if is_kept else "⚪"
                 st.write(f"{icon} **{item.get('item')}**")
-                st.caption(f"{item.get('location')} | {item.get('date')}")
+                # [NEW] 보관 위치 표시
+                storage_loc = item.get('storage', '미지정')
+                st.caption(f"습득: {item.get('location')} | 보관: {storage_loc} | {item.get('date')}")
             with c_btn:
                 if is_kept:
                     if st.button("수령", key=f"rec_{i}"):
@@ -739,7 +748,7 @@ with tab_work:
         else:
             st.success(f"총 {len(filtered_logs)}건의 작업이 있습니다.")
             
-            # 일괄 ZIP 다운로드
+            # [기존] 날짜 전체 일괄 ZIP 다운로드
             all_urls_for_date = []
             for l in filtered_logs:
                 if 'photo_url' in l: all_urls_for_date.append(l['photo_url'])
@@ -757,28 +766,50 @@ with tab_work:
                                     if r.status_code == 200:
                                         zf.writestr(f"{view_date_str}_{idx+1}.jpg", r.content)
                                 except: pass
-                        st.download_button(label="📦 압축 파일(ZIP) 저장하기", data=zip_buffer.getvalue(), file_name=f"work_photos_{view_date_str}.zip", mime="application/zip", key="dn_zip")
+                        st.download_button(label="📦 압축 파일(ZIP) 저장하기", data=zip_buffer.getvalue(), file_name=f"work_photos_{view_date_str}.zip", mime="application/zip", key="dn_zip_all")
 
-            # 로그 리스트 표시 (삭제 버튼 추가)
+            # 로그 리스트 표시 (개별 다운로드 & 삭제 버튼 추가)
             for log in filtered_logs:
                 with st.container(border=True):
-                    c_info, c_del = st.columns([5, 1])
+                    c_info, c_action = st.columns([5, 2])
+                    
+                    imgs_to_show = []
+                    if 'photo_url' in log: imgs_to_show.append(log['photo_url'])
+                    if 'photo_urls' in log and isinstance(log['photo_urls'], list):
+                        imgs_to_show.extend(log['photo_urls'])
+
                     with c_info:
                         st.write(f"📝 **{log.get('desc')}**")
                         st.caption(f"{log.get('date')} | {log.get('writer')}")
-                        
-                        imgs_to_show = []
-                        if 'photo_url' in log: imgs_to_show.append(log['photo_url'])
-                        if 'photo_urls' in log and isinstance(log['photo_urls'], list):
-                            imgs_to_show.extend(log['photo_urls'])
                         
                         if imgs_to_show:
                             cols = st.columns(3)
                             for i, url in enumerate(imgs_to_show):
                                 cols[i % 3].image(url, use_container_width=True)
                     
-                    # [NEW] 개별 삭제 버튼
-                    with c_del:
+                    with c_action:
+                        # [NEW] 개별 작업 다운로드 버튼
+                        if imgs_to_show:
+                            # 1장일 때와 여러 장일 때 구분 없이 ZIP으로 통일하거나, 1장은 바로 다운로드?
+                            # 깔끔하게 항상 ZIP으로 제공
+                            zip_buf_single = io.BytesIO()
+                            with zipfile.ZipFile(zip_buf_single, "w") as zf_single:
+                                for idx, url in enumerate(imgs_to_show):
+                                    try:
+                                        r = requests.get(url)
+                                        if r.status_code == 200:
+                                            zf_single.writestr(f"img_{idx+1}.jpg", r.content)
+                                    except: pass
+                            
+                            st.download_button(
+                                "📥 사진 다운로드", 
+                                data=zip_buf_single.getvalue(),
+                                file_name=f"work_{log['key']}.zip",
+                                mime="application/zip",
+                                key=f"dn_{log['key']}"
+                            )
+
+                        # [NEW] 개별 삭제 버튼
                         if st.button("삭제", key=f"del_work_{log['key']}"):
                             # 1. 파일 삭제
                             if imgs_to_show:
@@ -791,5 +822,3 @@ with tab_work:
 
     else:
         st.info("등록된 작업 내역이 없습니다.")
-
-
