@@ -5,6 +5,9 @@ from datetime import datetime, timedelta
 import calendar
 import os
 import json
+import base64
+import io
+from PIL import Image, ImageOps
 
 # --- 기본 설정 ---
 CRED_FILENAME = "service.json"
@@ -249,7 +252,7 @@ if st.sidebar.button("로그아웃"):
     st.rerun()
 
 # 탭 5개로 확장
-tab_cal, tab_my, tab_stay, tab_mon, tab_lost = st.tabs(["📅 근무", "✍️ 수정", "⛺ 연박", "📊 현황", "🧢 분실"])
+tab_cal, tab_my, tab_stay, tab_mon, tab_lost, tab_photo = st.tabs(["📅 근무", "✍️ 수정", "⛺ 연박", "📊 현황", "🧢 분실", "📷 작업사진"])
 
 # 1. 근무표 탭
 with tab_cal:
@@ -594,3 +597,115 @@ with tab_lost:
                         del lost_items[i]
                         set_data("lost_found", lost_items)
                         st.rerun()
+
+# 6. 작업사진 탭
+with tab_photo:
+    st.subheader("📷 날짜별 작업사진")
+    st.caption("※ 사진은 자동 압축되어 저장되며, 30일이 지나면 자동 삭제됩니다.")
+
+    # --- 데이터 로드 + 30일 자동 삭제 ---
+    def load_photos():
+        raw = get_data("work_photos")
+        if isinstance(raw, dict): return [v for v in raw.values() if v]
+        if isinstance(raw, list): return [x for x in raw if x]
+        return []
+
+    photos = load_photos()
+    today = datetime.now()
+    kept, removed = [], False
+    for p in photos:
+        try:
+            pd = datetime.strptime(p.get("date", ""), "%Y-%m-%d")
+            if (today - pd).days <= 30: kept.append(p)
+            else: removed = True
+        except:
+            kept.append(p)
+    if removed:
+        set_data("work_photos", kept)
+    photos = kept
+
+    # --- 업로드 UI ---
+    with st.expander("➕ 작업사진 올리기", expanded=True):
+        up_date = st.date_input("작업 날짜", key="photo_date")
+        up_writer = st.selectbox("작성자 (선택)", ["-"] + [m for m in members if m != "전체 보기"], key="photo_writer")
+        up_memo = st.text_input("메모 (선택)", key="photo_memo", placeholder="작업 내용")
+        up_files = st.file_uploader("사진 선택 (여러 장 가능)", type=["jpg", "jpeg", "png"],
+                                    accept_multiple_files=True, key="photo_files")
+
+        if st.button("업로드", type="primary", use_container_width=True):
+            if not up_files:
+                st.warning("사진을 선택해주세요.")
+            else:
+                cur = load_photos()
+                prog = st.progress(0.0)
+                ok = 0
+                for idx, f in enumerate(up_files):
+                    try:
+                        img = Image.open(f)
+                        img = ImageOps.exif_transpose(img)   # 회전 정보 반영
+                        img = img.convert("RGB")
+                        img.thumbnail((1024, 1024))           # 긴 변 1024px로 축소
+                        buf = io.BytesIO()
+                        img.save(buf, format="JPEG", quality=55, optimize=True)
+                        b64 = base64.b64encode(buf.getvalue()).decode()
+                        cur.append({
+                            "date": up_date.strftime("%Y-%m-%d"),
+                            "uploaded_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "writer": up_writer if up_writer != "-" else "",
+                            "memo": up_memo,
+                            "filename": f.name,
+                            "data": b64
+                        })
+                        ok += 1
+                    except Exception as e:
+                        st.error(f"{f.name} 처리 실패: {e}")
+                    prog.progress((idx + 1) / len(up_files))
+                set_data("work_photos", cur)
+                st.success(f"{ok}장 업로드 완료")
+                st.rerun()
+
+    st.divider()
+
+    # --- 날짜별 표시 ---
+    if not photos:
+        st.info("등록된 작업사진이 없습니다.")
+    else:
+        by_date = {}
+        for i, p in enumerate(photos):
+            by_date.setdefault(p.get("date", "-"), []).append(p)
+
+        for d in sorted(by_date.keys(), reverse=True):
+            day_photos = by_date[d]
+            with st.expander(f"📅 {d}  ({len(day_photos)}장)", expanded=True):
+                cols = st.columns(2)
+                for slot, p in enumerate(day_photos):
+                    try:
+                        img_bytes = base64.b64decode(p.get("data", ""))
+                    except:
+                        img_bytes = None
+                    with cols[slot % 2]:
+                        if img_bytes:
+                            st.image(img_bytes, use_container_width=True)
+                        cap = [x for x in [p.get("writer"), p.get("memo")] if x]
+                        if cap:
+                            st.caption(" | ".join(cap))
+                        c_dl, c_del = st.columns(2)
+                        ukey = f"{p.get('uploaded_at','')}_{p.get('filename','')}_{slot}"
+                        if img_bytes:
+                            c_dl.download_button("⬇️ 저장", data=img_bytes,
+                                                 file_name=p.get("filename", f"{d}_{slot}.jpg"),
+                                                 mime="image/jpeg", key=f"dl_{d}_{ukey}",
+                                                 use_container_width=True)
+                        if c_del.button("🗑️ 삭제", key=f"pdel_{d}_{ukey}", use_container_width=True):
+                            cur = load_photos()
+                            new_list, done = [], False
+                            for it in cur:
+                                if (not done and
+                                        it.get("uploaded_at") == p.get("uploaded_at") and
+                                        it.get("filename") == p.get("filename") and
+                                        it.get("data") == p.get("data")):
+                                    done = True
+                                    continue
+                                new_list.append(it)
+                            set_data("work_photos", new_list)
+                            st.rerun()
