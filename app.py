@@ -67,7 +67,7 @@ st.markdown("""
     .wb-b { background-color: #fff4e6; border: 1px solid #ffe8cc; color: #d9480f; }
     .wb-rest { background-color: #ffe3e3; color: #c92a2a; text-align: center; }
     .badge { font-size: 0.7rem; padding: 2px 4px; border-radius: 3px; margin-top: 1px; color: white; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
-    .bg-night { background-color: #1E3A8A; } .bg-leave { background-color: #10B981; } .bg-ot { background-color: #EF4444; } .bg-gray { background-color: #868e96; }
+    .bg-night { background-color: #1E3A8A; } .bg-leave { background-color: #10B981; } .bg-ot { background-color: #0EA5E9; } .bg-gray { background-color: #868e96; }
     
     /* 모바일 반응형 */
     @media (max-width: 600px) { 
