@@ -7,6 +7,7 @@ import os
 import json
 import base64
 import io
+import zipfile
 from PIL import Image, ImageOps
 
 # --- 기본 설정 ---
@@ -677,6 +678,29 @@ with tab_photo:
         for d in sorted(by_date.keys(), reverse=True):
             day_photos = by_date[d]
             with st.expander(f"📅 {d}  ({len(day_photos)}장)", expanded=True):
+                # --- 이 날짜 전체 ZIP 다운로드 ---
+                zip_buf = io.BytesIO()
+                used = {}
+                with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                    for p in day_photos:
+                        try:
+                            b = base64.b64decode(p.get("data", ""))
+                        except:
+                            continue
+                        fn = p.get("filename") or "photo.jpg"
+                        # 파일명 중복 처리
+                        if fn in used:
+                            used[fn] += 1
+                            stem, dot, ext = fn.rpartition(".")
+                            fn = f"{stem}_{used[fn]}.{ext}" if dot else f"{fn}_{used[fn]}"
+                        else:
+                            used[fn] = 0
+                        zf.writestr(fn, b)
+                st.download_button(f"📦 {d} 사진 전체 받기 (ZIP, {len(day_photos)}장)",
+                                   data=zip_buf.getvalue(),
+                                   file_name=f"작업사진_{d}.zip", mime="application/zip",
+                                   key=f"zip_{d}", use_container_width=True)
+
                 cols = st.columns(2)
                 for slot, p in enumerate(day_photos):
                     try:
@@ -689,14 +713,8 @@ with tab_photo:
                         cap = [x for x in [p.get("writer"), p.get("memo")] if x]
                         if cap:
                             st.caption(" | ".join(cap))
-                        c_dl, c_del = st.columns(2)
                         ukey = f"{p.get('uploaded_at','')}_{p.get('filename','')}_{slot}"
-                        if img_bytes:
-                            c_dl.download_button("⬇️ 저장", data=img_bytes,
-                                                 file_name=p.get("filename", f"{d}_{slot}.jpg"),
-                                                 mime="image/jpeg", key=f"dl_{d}_{ukey}",
-                                                 use_container_width=True)
-                        if c_del.button("🗑️ 삭제", key=f"pdel_{d}_{ukey}", use_container_width=True):
+                        if st.button("🗑️ 삭제", key=f"pdel_{d}_{ukey}", use_container_width=True):
                             cur = load_photos()
                             new_list, done = [], False
                             for it in cur:
