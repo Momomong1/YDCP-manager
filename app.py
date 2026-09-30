@@ -123,18 +123,30 @@ def normalize_data(data):
     if isinstance(data, list): return {str(i): v for i, v in enumerate(data) if v is not None}
     return data if data else {}
 
+def team_list(v):
+    if isinstance(v, str): return [v]
+    if isinstance(v, dict): v = list(v.values())
+    return [x for x in (v or []) if x]
+
+def get_roster(sch_data, team_key, month_key):
+    """해당 월 기준 조 명단: 현재 인원 + 그 달까지 근무한 퇴사자"""
+    teams = normalize_data(sch_data.get("teams", {}))
+    roster = team_list(teams.get(team_key, []))
+    for name, info in normalize_data(sch_data.get("retired", {})).items():
+        if (isinstance(info, dict) and info.get("team") == team_key
+                and month_key <= str(info.get("last_month", "")) and name not in roster):
+            roster.append(name)
+    return roster
+
 # --- 달력 그리기 ---
 def draw_calendar(year, month, sch_data, my_filter=None):
     records = normalize_data(sch_data.get("records", {}))
     teams = normalize_data(sch_data.get("teams", {}))
     month_rules = normalize_data(sch_data.get("month_rules", {}))
 
-    t1_list = teams.get("1", [])
-    t2_list = teams.get("2", [])
-    if isinstance(t1_list, str): t1_list = [t1_list]
-    if isinstance(t2_list, str): t2_list = [t2_list]
-
     month_key = f"{year}-{month:02d}"
+    t1_list = get_roster(sch_data, "1", month_key)
+    t2_list = get_roster(sch_data, "2", month_key)
     has_rule = month_key in month_rules
     rules = month_rules.get(month_key, {})
     start_team = rules.get("start_team", "1")
@@ -253,7 +265,7 @@ if st.sidebar.button("로그아웃"):
     st.rerun()
 
 # 탭 5개로 확장
-tab_cal, tab_my, tab_stay, tab_mon, tab_lost, tab_photo = st.tabs(["📅 근무", "✍️ 수정", "⛺ 연박", "📊 현황", "🧢 분실", "📷 작업사진"])
+tab_cal, tab_my, tab_stay, tab_mon, tab_lost, tab_photo, tab_staff = st.tabs(["📅 근무", "✍️ 수정", "⛺ 연박", "📊 현황", "🧢 분실", "📷 작업사진", "👥 인원"])
 
 # 1. 근무표 탭
 with tab_cal:
@@ -727,3 +739,131 @@ with tab_photo:
                                 new_list.append(it)
                             set_data("work_photos", new_list)
                             st.rerun()
+
+# 7. 인원 관리 탭 (추가 / 삭제 / 조 변경 / 퇴사 / 복직)
+with tab_staff:
+    st.subheader("인원 관리")
+    TEAM_LABELS = {"1": "1조", "2": "2조", "others": "기타"}
+    BAD_CHARS = set('.$#[]/')
+
+    def staff_load():
+        sch = get_data("schedule") or {}
+        teams = normalize_data(sch.get("teams", {}))
+        return ({k: team_list(teams.get(k, [])) for k in TEAM_LABELS},
+                normalize_data(sch.get("retired", {})))
+
+    def staff_save_team(key, names):
+        if names: set_data(f"schedule/teams/{key}", names)
+        else: db.reference(f"yuldong_data/schedule/teams/{key}").delete()
+
+    teams_now, retired_now = staff_load()
+    for k, label in TEAM_LABELS.items():
+        st.markdown(f"**{label}** ({len(teams_now[k])}명): " + (", ".join(teams_now[k]) if teams_now[k] else "없음"))
+    if retired_now:
+        st.caption("퇴사자: " + ", ".join(
+            f"{n}({TEAM_LABELS.get(i.get('team'), '?')}, ~{i.get('last_month', '')})"
+            for n, i in retired_now.items() if isinstance(i, dict)))
+
+    st.divider()
+    st.markdown("#### ➕ 인원 추가")
+    c_n, c_t = st.columns([2, 1])
+    add_name = c_n.text_input("이름", key="staff_add_name").strip()
+    add_team = c_t.selectbox("조", list(TEAM_LABELS), format_func=TEAM_LABELS.get, key="staff_add_team")
+    if st.button("추가", key="staff_add_btn", type="primary", use_container_width=True):
+        cur_teams, cur_ret = staff_load()
+        if not add_name:
+            st.warning("이름을 입력해주세요.")
+        elif BAD_CHARS & set(add_name):
+            st.warning("이름에 . $ # [ ] / 문자는 쓸 수 없습니다.")
+        elif any(add_name in v for v in cur_teams.values()):
+            st.warning("이미 명단에 있는 이름입니다.")
+        else:
+            cur_teams[add_team].append(add_name)
+            staff_save_team(add_team, cur_teams[add_team])
+            if add_name in cur_ret:
+                db.reference(f"yuldong_data/schedule/retired/{add_name}").delete()
+            st.success(f"{add_name} 님을 {TEAM_LABELS[add_team]}에 추가했습니다.")
+            st.rerun()
+
+    everyone = [(k, n) for k in TEAM_LABELS for n in teams_now[k]]
+    fmt_person = lambda kn: f"{kn[1]} ({TEAM_LABELS[kn[0]]})"
+
+    st.divider()
+    st.markdown("#### 🔄 조 변경")
+    if everyone:
+        mv_person = st.selectbox("대상", everyone, format_func=fmt_person, key="staff_mv_person")
+        mv_targets = [k for k in TEAM_LABELS if k != mv_person[0]]
+        mv_to = st.selectbox("이동할 조", mv_targets, format_func=TEAM_LABELS.get, key="staff_mv_to")
+        if st.button("조 변경", key="staff_mv_btn", use_container_width=True):
+            cur_teams, _ = staff_load()
+            src, name = mv_person
+            if name in cur_teams[mv_to]:
+                st.warning("이동할 조에 이미 같은 이름이 있습니다.")
+            else:
+                if name in cur_teams[src]: cur_teams[src].remove(name)
+                cur_teams[mv_to].append(name)
+                staff_save_team(src, cur_teams[src])
+                staff_save_team(mv_to, cur_teams[mv_to])
+                st.success(f"{name} 님을 {TEAM_LABELS[mv_to]}(으)로 옮겼습니다.")
+                st.rerun()
+    else:
+        st.info("등록된 인원이 없습니다.")
+
+    st.divider()
+    st.markdown("#### 🚪 퇴사 처리 (과거 달력은 유지)")
+    rotating = [(k, n) for k, n in everyone if k in ("1", "2")]
+    if rotating:
+        rt_person = st.selectbox("대상", rotating, format_func=fmt_person, key="staff_rt_person")
+        rt_month = st.text_input("마지막 근무 월 (YYYY-MM)", value=datetime.now().strftime("%Y-%m"), key="staff_rt_month").strip()
+        if st.button("퇴사 처리", key="staff_rt_btn", use_container_width=True):
+            try:
+                datetime.strptime(rt_month, "%Y-%m")
+                valid = True
+            except ValueError:
+                valid = False
+            if not valid:
+                st.warning("YYYY-MM 형식으로 입력해주세요. (예: 2026-09)")
+            else:
+                cur_teams, _ = staff_load()
+                src, name = rt_person
+                if name in cur_teams[src]: cur_teams[src].remove(name)
+                staff_save_team(src, cur_teams[src])
+                set_data(f"schedule/retired/{name}", {"team": src, "last_month": rt_month})
+                st.success(f"{name} 님을 퇴사 처리했습니다. ({rt_month}까지 달력에 표시)")
+                st.rerun()
+    else:
+        st.info("1조/2조에 인원이 없습니다.")
+
+    st.divider()
+    st.markdown("#### ↩️ 복직 / 퇴사자 목록에서 삭제")
+    ret_names = [n for n, i in retired_now.items() if isinstance(i, dict)]
+    if ret_names:
+        ret_sel = st.selectbox("퇴사자", ret_names, key="staff_ret_sel")
+        cb1, cb2 = st.columns(2)
+        if cb1.button("복직", key="staff_ret_restore", use_container_width=True):
+            cur_teams, cur_ret = staff_load()
+            info = cur_ret.get(ret_sel, {})
+            k = info.get("team", "1") if info.get("team") in ("1", "2") else "1"
+            if ret_sel not in cur_teams[k]: cur_teams[k].append(ret_sel)
+            staff_save_team(k, cur_teams[k])
+            db.reference(f"yuldong_data/schedule/retired/{ret_sel}").delete()
+            st.success(f"{ret_sel} 님을 {TEAM_LABELS[k]}로 복직시켰습니다.")
+            st.rerun()
+        if cb2.button("목록에서 삭제", key="staff_ret_purge", use_container_width=True):
+            db.reference(f"yuldong_data/schedule/retired/{ret_sel}").delete()
+            st.success("삭제했습니다. 과거 달력에서도 이 사람이 사라집니다.")
+            st.rerun()
+    else:
+        st.caption("퇴사자가 없습니다.")
+
+    st.divider()
+    st.markdown("#### 🗑️ 명단에서 삭제 (퇴사가 아닌 완전 제외)")
+    if everyone:
+        del_person = st.selectbox("대상", everyone, format_func=fmt_person, key="staff_del_person")
+        if st.button("삭제", key="staff_del_btn", use_container_width=True):
+            cur_teams, _ = staff_load()
+            src, name = del_person
+            if name in cur_teams[src]: cur_teams[src].remove(name)
+            staff_save_team(src, cur_teams[src])
+            st.success(f"{name} 님을 명단에서 삭제했습니다.")
+            st.rerun()
