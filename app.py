@@ -265,7 +265,7 @@ if st.sidebar.button("로그아웃"):
     st.rerun()
 
 # 탭 5개로 확장
-tab_cal, tab_my, tab_stay, tab_mon, tab_lost, tab_photo, tab_staff = st.tabs(["📅 근무", "✍️ 수정", "⛺ 연박", "📊 현황", "🧢 분실", "📷 작업사진", "👥 인원"])
+tab_cal, tab_my, tab_stay, tab_mon, tab_lost, tab_photo, tab_staff = st.tabs(["📅 근무", "✍️ 수정", "⛺ 연박", "📊 현황", "🧢 분실", "📷 작업사진", "👥 인원설정"])
 
 # 1. 근무표 탭
 with tab_cal:
