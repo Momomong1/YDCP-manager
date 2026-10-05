@@ -31,7 +31,7 @@ def check_password():
     if "PASSWORD" in st.secrets:
         system_pass = st.secrets["PASSWORD"]
     else:
-        system_pass = "0616"
+        system_pass = "0725"
     
     if st.session_state.password_input == system_pass:
         st.session_state.logged_in = True
